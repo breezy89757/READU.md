@@ -32,11 +32,15 @@ namespace ReadU
         private TabDocument _activeTab;
 
         private SettingsWatcher _settingsWatcher;
-        private MarkdownReaderModuleSettings _currentSettings;
+        private ReadUSettings _currentSettings;
 
         // WebView2 readiness
         private bool _webViewReady;
         private bool _previewWebViewReady;
+
+        // Shell page loaded (CDN resources cached)
+        private bool _shellLoaded;
+        private bool _previewShellLoaded;
 
         // Edit-mode debounce
         private CancellationTokenSource _editDebounceCts;
@@ -102,7 +106,10 @@ namespace ReadU
                 ConfigureWebView(MarkdownWebView);
                 _webViewReady = true;
 
-                // 3. Open initial tab
+                // 3. Pre-load shell HTML with CDN resources (highlight.js + mermaid.js)
+                await LoadShellAsync(MarkdownWebView);
+
+                // 4. Open initial tab
                 if (!string.IsNullOrEmpty(filePath) && File.Exists(filePath))
                 {
                     await OpenFileInNewTabAsync(filePath);
@@ -116,6 +123,31 @@ namespace ReadU
             {
                 Logger.LogError("Startup initialization failed", ex);
             }
+        }
+
+        /// <summary>
+        /// Navigates a WebView2 to the shell HTML (styles + CDN scripts).
+        /// After this, use UpdateWebViewContent() to inject body content without re-loading scripts.
+        /// </summary>
+        private async Task LoadShellAsync(WebView2 wv)
+        {
+            int fontSize = _currentSettings?.Properties?.FontSize?.Value ?? 14;
+            string shell = MarkdownParser.GetShellHtml(fontSize);
+
+            var tcs = new TaskCompletionSource();
+            void handler(object s, CoreWebView2NavigationCompletedEventArgs e)
+            {
+                wv.CoreWebView2.NavigationCompleted -= handler;
+                tcs.SetResult();
+            }
+            wv.CoreWebView2.NavigationCompleted += handler;
+            wv.NavigateToString(shell);
+            await tcs.Task;
+
+            if (wv == PreviewWebView)
+                _previewShellLoaded = true;
+            else
+                _shellLoaded = true;
         }
 
         private static void ConfigureWebView(WebView2 wv)
@@ -272,9 +304,9 @@ namespace ReadU
             }
         }
 
-        private async void NavigateWebView(WebView2 wv, string html, double scrollY, int zoom)
+        private async void NavigateWebView(WebView2 wv, string bodyHtml, double scrollY, int zoom)
         {
-            if (wv == null || html == null) return;
+            if (wv == null || bodyHtml == null) return;
 
             // Lazy-init PreviewWebView
             if (wv == PreviewWebView && !_previewWebViewReady)
@@ -294,29 +326,34 @@ namespace ReadU
 
             if (wv.CoreWebView2 == null) return;
 
-            // One-shot handler for post-navigation setup
-            void handler(object s, CoreWebView2NavigationCompletedEventArgs e)
+            // Ensure shell is loaded (CDN resources cached)
+            bool isPreview = wv == PreviewWebView;
+            if (!(isPreview ? _previewShellLoaded : _shellLoaded))
             {
-                wv.CoreWebView2.NavigationCompleted -= handler;
-                _ = ApplyPostNavigationAsync(wv, scrollY, zoom);
+                await LoadShellAsync(wv);
             }
-            wv.CoreWebView2.NavigationCompleted += handler;
 
-            wv.NavigateToString(html);
-        }
+            // Inject body content via updateContent() — no full page reload
+            string escaped = bodyHtml
+                .Replace("\\", "\\\\")
+                .Replace("'", "\\'")
+                .Replace("\n", "\\n")
+                .Replace("\r", "\\r");
 
-        private static async Task ApplyPostNavigationAsync(WebView2 wv, double scrollY, int zoom)
-        {
             try
             {
-                await Task.Delay(30);
-                if (wv.CoreWebView2 == null) return;
+                await wv.CoreWebView2.ExecuteScriptAsync($"updateContent('{escaped}');");
+
+                // Apply zoom and scroll position
                 if (zoom != 100)
                     await wv.CoreWebView2.ExecuteScriptAsync($"document.body.style.zoom='{zoom}%';");
                 if (scrollY > 0)
                     await wv.CoreWebView2.ExecuteScriptAsync($"window.scrollTo(0,{scrollY});");
             }
-            catch { }
+            catch (Exception ex)
+            {
+                Logger.LogError("Failed to update WebView content", ex);
+            }
         }
 
         private void RemoveTab(TabDocument tab)
@@ -380,11 +417,10 @@ namespace ReadU
             if (tab.Content == null) return;
 
             bool mermaid = _currentSettings?.Properties?.EnableMermaid?.Value ?? true;
-            int fontSize = _currentSettings?.Properties?.FontSize?.Value ?? 14;
 
             tab.Toc = MarkdownParser.ExtractTableOfContents(tab.Content);
-            tab.RenderedHtml = MarkdownParser.ParseMarkdown(
-                tab.Content, tab.FilePath ?? "Welcome", mermaid, fontSize);
+            tab.RenderedHtml = MarkdownParser.ParseMarkdownBody(
+                tab.Content, tab.FilePath ?? "Welcome", mermaid);
         }
 
         private (string Html, List<TocItem> Toc) RenderWelcomePage()
@@ -429,9 +465,8 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
 *READU.md v2.0.0*
 ";
             bool mermaid = _currentSettings?.Properties?.EnableMermaid?.Value ?? true;
-            int fontSize = _currentSettings?.Properties?.FontSize?.Value ?? 14;
             var toc = MarkdownParser.ExtractTableOfContents(md);
-            var html = MarkdownParser.ParseMarkdown(md, "Welcome", mermaid, fontSize);
+            var html = MarkdownParser.ParseMarkdownBody(md, "Welcome", mermaid);
             return (html, toc);
         }
 
@@ -439,11 +474,24 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
 
         #region Settings
 
-        private void OnSettingsChanged(object sender, MarkdownReaderModuleSettings newSettings)
+        private void OnSettingsChanged(object sender, ReadUSettings newSettings)
         {
-            DispatcherQueue.TryEnqueue(() =>
+            DispatcherQueue.TryEnqueue(async () =>
             {
+                var oldFontSize = _currentSettings?.Properties?.FontSize?.Value ?? 14;
                 _currentSettings = newSettings;
+                var newFontSize = _currentSettings?.Properties?.FontSize?.Value ?? 14;
+
+                // Update font size in shell CSS if changed
+                if (oldFontSize != newFontSize)
+                {
+                    string js = $"document.body.style.fontSize='{newFontSize}px';";
+                    if (_shellLoaded && MarkdownWebView?.CoreWebView2 != null)
+                        await MarkdownWebView.CoreWebView2.ExecuteScriptAsync(js);
+                    if (_previewShellLoaded && PreviewWebView?.CoreWebView2 != null)
+                        await PreviewWebView.CoreWebView2.ExecuteScriptAsync(js);
+                }
+
                 if (_activeTab != null && _activeTab.Content != null)
                 {
                     RenderTabContent(_activeTab);
@@ -723,13 +771,10 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
                                 TocItems.Add(item);
 
                         // Incremental preview update (DOM diff, preserves Mermaid SVGs)
-                        if (PreviewWebView?.CoreWebView2 != null && _activeTab.Content != null)
+                        // tab.RenderedHtml is now body-only, reuse directly
+                        if (PreviewWebView?.CoreWebView2 != null && _activeTab.RenderedHtml != null)
                         {
-                            bool mermaid = _currentSettings?.Properties?.EnableMermaid?.Value ?? true;
-                            string bodyHtml = MarkdownParser.ParseMarkdownBody(
-                                _activeTab.Content, _activeTab.FilePath ?? "Welcome", mermaid);
-                            // Escape for JS string
-                            string escaped = bodyHtml
+                            string escaped = _activeTab.RenderedHtml
                                 .Replace("\\", "\\\\")
                                 .Replace("'", "\\'")
                                 .Replace("\n", "\\n")

@@ -22,7 +22,7 @@ namespace ReadU.Helpers
             DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
         };
 
-        public event EventHandler<MarkdownReaderModuleSettings> SettingsChanged;
+        public event EventHandler<ReadUSettings> SettingsChanged;
 
         public SettingsWatcher()
         {
@@ -62,7 +62,7 @@ namespace ReadU.Helpers
         {
             try
             {
-                var defaults = new MarkdownReaderModuleSettings
+                var defaults = new ReadUSettings
                 {
                     Properties = new ModuleProperties
                     {
@@ -99,7 +99,7 @@ namespace ReadU.Helpers
             }, token);
         }
 
-        public MarkdownReaderModuleSettings ReadSettings()
+        public ReadUSettings ReadSettings()
         {
             try
             {
@@ -112,7 +112,7 @@ namespace ReadU.Helpers
                     try
                     {
                         string json = File.ReadAllText(_settingsFilePath);
-                        var settings = JsonSerializer.Deserialize<MarkdownReaderModuleSettings>(json, s_jsonOptions);
+                        var settings = JsonSerializer.Deserialize<ReadUSettings>(json, s_jsonOptions);
                         if (settings != null)
                         {
                             SettingsChanged?.Invoke(this, settings);

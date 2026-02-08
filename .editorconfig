@@ -1,0 +1,22 @@
+# EditorConfig — https://editorconfig.org
+root = true
+
+[*]
+indent_style = space
+indent_size = 4
+end_of_line = crlf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.{cs,xaml}]
+indent_size = 4
+
+[*.{json,xml,yml,yaml}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.sln]
+indent_style = tab

@@ -27,6 +27,24 @@ namespace ReadU.Helpers
 
         private static readonly MarkdownPipeline s_tocPipeline = s_renderPipeline;
 
+        /// <summary>
+        /// Returns a shell HTML page with all styles, CDN scripts (highlight.js, mermaid.js),
+        /// and the incremental updateContent() function — but an empty body.
+        /// Navigate WebView2 to this once; then call updateContent(bodyHtml) for content changes.
+        /// </summary>
+        public static string GetShellHtml(int fontSize = 14)
+        {
+            var sb = new StringBuilder(4096);
+            sb.Append("<!DOCTYPE html><html><head><meta charset='utf-8'>");
+            sb.Append(GetStyles(fontSize));
+            sb.Append("</head><body>");
+            sb.Append(GetHighlightScript());
+            sb.Append(GetMermaidScript());
+            sb.Append(GetIncrementalUpdateScript());
+            sb.Append("</body></html>");
+            return sb.ToString();
+        }
+
         public static string ParseMarkdown(string markdownContent, string filePath, bool enableMermaid = true, int fontSize = 14)
         {
             string htmlBody = Markdown.ToHtml(markdownContent, s_renderPipeline);
@@ -230,12 +248,24 @@ mermaid.initialize({ startOnLoad: true, theme: window.matchMedia('(prefers-color
         {
             return @"
 <script>
-// Incremental DOM update — avoids full page reload in edit mode.
+// Incremental DOM update — avoids full page reload.
 // Preserves already-rendered Mermaid SVGs by hash comparison.
 async function updateContent(newBodyHtml) {
-    const parser = new DOMParser();
-    const newDoc = parser.parseFromString('<body>' + newBodyHtml + '</body>', 'text/html');
-    const newBody = newDoc.body;
+    // Handle <base> tag: extract from body content and place in <head>
+    const baseMatch = newBodyHtml.match(/<base\s+href='([^']*)'[^>]*>/i);
+    if (baseMatch) {
+        let baseEl = document.getElementById('contentBase');
+        if (!baseEl) {
+            baseEl = document.createElement('base');
+            baseEl.id = 'contentBase';
+            document.head.appendChild(baseEl);
+        }
+        baseEl.href = baseMatch[1];
+        newBodyHtml = newBodyHtml.replace(baseMatch[0], '');
+    } else {
+        const baseEl = document.getElementById('contentBase');
+        if (baseEl) baseEl.href = 'about:blank';
+    }
 
     // Collect existing Mermaid SVGs keyed by hash
     const existingSvgs = new Map();

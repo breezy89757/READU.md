@@ -6,6 +6,12 @@
     <RootNamespace>ReadU</RootNamespace>
     <AssemblyName>READU.md</AssemblyName>
     <Product>READU.md</Product>
+    <Version>2.0.0</Version>
+    <Authors>breez</Authors>
+    <Description>A fast, lightweight Markdown reader and editor for Windows, built with WinUI 3.</Description>
+    <Copyright>Copyright (c) 2025 breez</Copyright>
+    <RepositoryUrl>https://github.com/nicebreezy/READU.md</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Platforms>x64;ARM64</Platforms>
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>

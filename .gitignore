@@ -18,3 +18,26 @@ xaml_out.log
 
 # Planning docs (not for release)
 PHASE2_PLAN.md
+Rebranding SwiftMD Project.md
+
+# MSIX packaging
+*.appx
+*.msix
+*.appxbundle
+*.msixbundle
+*.appxupload
+*.msixupload
+AppPackages/
+BundleArtifacts/
+
+# NuGet
+*.nupkg
+*.snupkg
+
+# Publish
+*.pubxml
+!**/PublishProfiles/*.pubxml
+
+# JetBrains
+.idea/
+*.DotSettings*
