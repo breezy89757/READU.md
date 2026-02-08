@@ -179,7 +179,8 @@ input[type='checkbox'] {{ margin-right: 0.5em; }}
             return @"
 <script type=""module"">
 import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-mermaid.initialize({ startOnLoad: true, theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default' });
+window.mermaid = mermaid;
+mermaid.initialize({ startOnLoad: false, theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default' });
 </script>";
         }
 
@@ -293,10 +294,18 @@ async function updateContent(newBodyHtml) {
 
     // Render only new/changed Mermaid blocks
     const unrendered = document.querySelectorAll('[data-mermaid-hash]:not([data-mermaid-rendered])');
-    if (unrendered.length > 0 && typeof mermaid !== 'undefined') {
+    if (unrendered.length > 0 && window.mermaid) {
         try {
-            await mermaid.run({ nodes: unrendered });
+            await window.mermaid.run({ nodes: unrendered });
         } catch(e) { console.warn('Mermaid render error:', e); }
+    }
+
+    // Render mermaid blocks without hash (plain class=""language-mermaid"" or class=""mermaid"")
+    const plainMermaid = document.querySelectorAll('pre > code.language-mermaid:not([data-mermaid-rendered]), .mermaid:not([data-mermaid-rendered]):not(svg)');
+    if (plainMermaid.length > 0 && window.mermaid) {
+        try {
+            await window.mermaid.run({ nodes: plainMermaid });
+        } catch(e) { console.warn('Mermaid plain render error:', e); }
     }
 
     // Re-run highlight.js on new code blocks

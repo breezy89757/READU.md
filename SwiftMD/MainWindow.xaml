@@ -62,6 +62,10 @@
                         Background="Transparent" BorderThickness="0" Padding="6" Width="32" Height="32">
                     <FontIcon Glyph="&#xE749;" FontSize="14" />
                 </Button>
+                <Button x:Name="ScreenshotButton" Click="ScreenshotButton_Click" ToolTipService.ToolTip="Full Page Screenshot"
+                        Background="Transparent" BorderThickness="0" Padding="6" Width="32" Height="32">
+                    <FontIcon Glyph="&#xE722;" FontSize="14" />
+                </Button>
             </StackPanel>
         </Grid>
 

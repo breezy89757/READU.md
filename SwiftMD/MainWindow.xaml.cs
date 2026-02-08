@@ -158,6 +158,10 @@ namespace ReadU
             s.IsZoomControlEnabled = false;
             s.AreDefaultContextMenusEnabled = true;
             s.IsBuiltInErrorPageEnabled = false;
+
+            // Follow system dark/light theme for prefers-color-scheme CSS
+            wv.CoreWebView2.Profile.PreferredColorScheme =
+                CoreWebView2PreferredColorScheme.Auto;
             s.IsPinchZoomEnabled = false;
         }
 
@@ -1007,6 +1011,75 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
         private async void ZoomInButton_Click(object sender, RoutedEventArgs e) => await ZoomInAsync();
         private async void ZoomOutButton_Click(object sender, RoutedEventArgs e) => await ZoomOutAsync();
         private async void PrintButton_Click(object sender, RoutedEventArgs e) => await PrintAsync();
+        private async void ScreenshotButton_Click(object sender, RoutedEventArgs e) => await CaptureFullPageScreenshotAsync();
+
+        #endregion
+
+        #region Full Page Screenshot
+
+        private async Task CaptureFullPageScreenshotAsync()
+        {
+            var wv = _activeTab?.IsEditMode == true ? PreviewWebView : MarkdownWebView;
+            if (wv?.CoreWebView2 == null) return;
+
+            try
+            {
+                // Get full page dimensions
+                var dimsJson = await wv.CoreWebView2.ExecuteScriptAsync(
+                    "JSON.stringify({w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight, dpr: window.devicePixelRatio})");
+                var dims = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(dimsJson);
+                int width = dims.GetProperty("w").GetInt32();
+                int height = dims.GetProperty("h").GetInt32();
+                double dpr = dims.GetProperty("dpr").GetDouble();
+
+                // Use CDP Page.captureScreenshot with clip for full page
+                string cdpParams = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    format = "png",
+                    clip = new { x = 0, y = 0, width, height, scale = dpr },
+                    captureBeyondViewport = true
+                });
+
+                string result = await wv.CoreWebView2.CallDevToolsProtocolMethodAsync(
+                    "Page.captureScreenshot", cdpParams);
+
+                var resultJson = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(result);
+                string base64 = resultJson.GetProperty("data").GetString();
+                byte[] imageBytes = Convert.FromBase64String(base64);
+
+                // Save dialog
+                var picker = new Windows.Storage.Pickers.FileSavePicker();
+                picker.SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.PicturesLibrary;
+                picker.FileTypeChoices.Add("PNG Image", new List<string> { ".png" });
+                picker.SuggestedFileName = $"{_activeTab?.FileName ?? "screenshot"}_{DateTime.Now:yyyyMMdd_HHmmss}";
+
+                var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+                WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+
+                var file = await picker.PickSaveFileAsync();
+                if (file == null) return;
+
+                await File.WriteAllBytesAsync(file.Path, imageBytes);
+
+                // Show success notification
+                this.Title = $"Screenshot saved — {file.Name}";
+                _ = Task.Run(async () =>
+                {
+                    await Task.Delay(2000);
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        if (_activeTab != null)
+                            this.Title = _activeTab.IsWelcome
+                                ? "READU.md - Welcome"
+                                : $"{_activeTab.FileName} - READU.md";
+                    });
+                });
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError("Full page screenshot failed", ex);
+            }
+        }
 
         #endregion
     }
