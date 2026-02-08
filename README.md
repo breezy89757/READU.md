@@ -64,7 +64,7 @@ A fast, lightweight Markdown reader & editor for Windows, built with **Fluent De
 ### Build & Run
 ```bash
 # Clone
-git clone https://github.com/nicebreezy/READU.md.git
+git clone https://github.com/breezy89757/READU.md.git
 cd READU.md
 
 # Build
