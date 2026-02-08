@@ -5,7 +5,9 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using Markdig;
 using Markdig.Renderers.Html;
 using Markdig.Syntax;
@@ -53,6 +55,7 @@ namespace ReadU.Helpers
                 sb.Append(GetMermaidScript());
 
             sb.Append(GetHighlightScript());
+            sb.Append(GetIncrementalUpdateScript());
             sb.Append("</body></html>");
 
             return sb.ToString();
@@ -169,6 +172,116 @@ mermaid.initialize({ startOnLoad: true, theme: window.matchMedia('(prefers-color
 <link rel=""stylesheet"" href=""https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css"" media=""(prefers-color-scheme: dark)"">
 <script src=""https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js""></script>
 <script>hljs.highlightAll();</script>";
+        }
+
+        /// <summary>
+        /// Returns just the inner HTML body content (no doctype/head/scripts).
+        /// Used for incremental DOM updates in edit mode.
+        /// </summary>
+        public static string ParseMarkdownBody(string markdownContent, string filePath, bool enableMermaid = true)
+        {
+            string htmlBody = Markdown.ToHtml(markdownContent, s_renderPipeline);
+
+            if (enableMermaid)
+                htmlBody = AddMermaidHashes(htmlBody);
+
+            // Add base href for relative paths
+            if (!string.IsNullOrEmpty(filePath) && filePath != "Welcome" && File.Exists(filePath))
+            {
+                string baseDir = Path.GetDirectoryName(filePath);
+                htmlBody = $"<base href='file:///{baseDir.Replace('\\', '/')}/'>{htmlBody}";
+            }
+
+            return htmlBody;
+        }
+
+        /// <summary>
+        /// Adds data-mermaid-hash attributes to mermaid code blocks so the
+        /// incremental updater can skip re-rendering unchanged diagrams.
+        /// </summary>
+        private static string AddMermaidHashes(string html)
+        {
+            // Match <pre><code class="language-mermaid">...content...</code></pre>
+            // or <pre class="mermaid">...content...</pre> (Markdig output)
+            return Regex.Replace(html,
+                @"(<(?:pre|code)\s+class=""(?:language-)?mermaid"")([^>]*>)([\s\S]*?)(</(?:pre|code)>)",
+                m =>
+                {
+                    string content = m.Groups[3].Value;
+                    string hash = ComputeShortHash(content);
+                    return $"{m.Groups[1].Value} data-mermaid-hash=\"{hash}\"{m.Groups[2].Value}{content}{m.Groups[4].Value}";
+                },
+                RegexOptions.IgnoreCase);
+        }
+
+        private static string ComputeShortHash(string input)
+        {
+            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
+            // Use first 8 bytes as hex = 16 chars, plenty for deduplication
+            return Convert.ToHexString(bytes, 0, 8);
+        }
+
+        /// <summary>
+        /// Injects an incremental update function into the page.
+        /// Called from C# via ExecuteScriptAsync("updateContent('...')").
+        /// Uses lightweight DOM diffing to preserve Mermaid SVGs.
+        /// </summary>
+        private static string GetIncrementalUpdateScript()
+        {
+            return @"
+<script>
+// Incremental DOM update — avoids full page reload in edit mode.
+// Preserves already-rendered Mermaid SVGs by hash comparison.
+async function updateContent(newBodyHtml) {
+    const parser = new DOMParser();
+    const newDoc = parser.parseFromString('<body>' + newBodyHtml + '</body>', 'text/html');
+    const newBody = newDoc.body;
+
+    // Collect existing Mermaid SVGs keyed by hash
+    const existingSvgs = new Map();
+    document.querySelectorAll('[data-mermaid-hash]').forEach(el => {
+        const hash = el.getAttribute('data-mermaid-hash');
+        const svg = el.querySelector('svg') || (el.nextElementSibling && el.nextElementSibling.tagName === 'svg' ? el.nextElementSibling : null);
+        if (hash && svg) existingSvgs.set(hash, svg.cloneNode(true));
+    });
+
+    // Replace body contents
+    // Keep <base> if present in new content
+    document.body.innerHTML = newBodyHtml;
+
+    // Restore cached Mermaid SVGs for unchanged diagrams
+    document.querySelectorAll('[data-mermaid-hash]').forEach(el => {
+        const hash = el.getAttribute('data-mermaid-hash');
+        if (existingSvgs.has(hash)) {
+            // Replace the code block with the cached SVG
+            const cachedSvg = existingSvgs.get(hash);
+            el.innerHTML = '';
+            el.appendChild(cachedSvg);
+            el.setAttribute('data-mermaid-rendered', 'true');
+        }
+    });
+
+    // Render only new/changed Mermaid blocks
+    const unrendered = document.querySelectorAll('[data-mermaid-hash]:not([data-mermaid-rendered])');
+    if (unrendered.length > 0 && typeof mermaid !== 'undefined') {
+        try {
+            await mermaid.run({ nodes: unrendered });
+        } catch(e) { console.warn('Mermaid render error:', e); }
+    }
+
+    // Re-run highlight.js on new code blocks
+    if (typeof hljs !== 'undefined') {
+        document.querySelectorAll('pre code:not(.hljs)').forEach(block => {
+            hljs.highlightElement(block);
+        });
+    }
+
+    // Restore zoom if set
+    if (document.body.dataset.zoom) {
+        document.body.style.zoom = document.body.dataset.zoom;
+    }
+}
+</script>";
         }
 
         public static List<Models.TocItem> ExtractTableOfContents(string markdownContent)

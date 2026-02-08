@@ -710,7 +710,7 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
                     await Task.Delay(EditDebounceMs, token);
                     if (token.IsCancellationRequested) return;
 
-                    DispatcherQueue.TryEnqueue(() =>
+                    DispatcherQueue.TryEnqueue(async () =>
                     {
                         if (_activeTab == null || !_activeTab.IsEditMode) return;
 
@@ -722,9 +722,21 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
                             foreach (var item in _activeTab.Toc)
                                 TocItems.Add(item);
 
-                        // Update preview
-                        if (PreviewWebView?.CoreWebView2 != null && _activeTab.RenderedHtml != null)
-                            PreviewWebView.NavigateToString(_activeTab.RenderedHtml);
+                        // Incremental preview update (DOM diff, preserves Mermaid SVGs)
+                        if (PreviewWebView?.CoreWebView2 != null && _activeTab.Content != null)
+                        {
+                            bool mermaid = _currentSettings?.Properties?.EnableMermaid?.Value ?? true;
+                            string bodyHtml = MarkdownParser.ParseMarkdownBody(
+                                _activeTab.Content, _activeTab.FilePath ?? "Welcome", mermaid);
+                            // Escape for JS string
+                            string escaped = bodyHtml
+                                .Replace("\\", "\\\\")
+                                .Replace("'", "\\'")
+                                .Replace("\n", "\\n")
+                                .Replace("\r", "\\r");
+                            await PreviewWebView.CoreWebView2.ExecuteScriptAsync(
+                                $"if(typeof updateContent==='function')updateContent('{escaped}');");
+                        }
                     });
                 }
                 catch (TaskCanceledException) { }
