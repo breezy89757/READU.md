@@ -78,7 +78,7 @@ git clone https://github.com/breezy89757/READU.md.git
 cd READU.md
 
 # Build
-dotnet build SwiftMD\READU.md.csproj -p:Platform=x64
+dotnet build src\READU.md.csproj -p:Platform=x64
 
 # Or open READU.md.sln in Visual Studio and press F5
 ```
