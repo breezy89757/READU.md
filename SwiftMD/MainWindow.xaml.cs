@@ -444,6 +444,7 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
 * **Drag & Drop** — drop any `.md` file to open it
 * **Hot Reload** — automatically refreshes when the file changes
 * **PDF Export** — press `Ctrl+P` to print/export as PDF
+* **Full Page Screenshot** — capture the entire rendered page as PNG
 
 ## How to use
 1. Drag a Markdown file onto this window
@@ -461,6 +462,7 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
 | `Ctrl+S` | Save file (edit mode) |
 | `Ctrl+N` | New blank tab (edit mode) |
 | `Ctrl+P` | Print / Export PDF |
+| `Ctrl+Shift+S` | Full page screenshot |
 | `Ctrl++` / `Ctrl+-` | Zoom in / out |
 | `Ctrl+0` | Reset zoom to 100% |
 | `Ctrl+Home` | Open Welcome page |
@@ -884,7 +886,10 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
 
                 case VirtualKey.S:
                     e.Handled = true;
-                    await SaveActiveFileAsync();
+                    if (isShift)
+                        await CaptureFullPageScreenshotAsync();
+                    else
+                        await SaveActiveFileAsync();
                     break;
 
                 case VirtualKey.N:
@@ -1022,11 +1027,16 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
             var wv = _activeTab?.IsEditMode == true ? PreviewWebView : MarkdownWebView;
             if (wv?.CoreWebView2 == null) return;
 
+            // Visual feedback: disable button during capture
+            ScreenshotButton.IsEnabled = false;
+            var origTitle = this.Title;
+            this.Title = "Capturing screenshot...";
+
             try
             {
-                // Get full page dimensions
+                // Get full page dimensions — return raw object, ExecuteScriptAsync serializes to JSON
                 var dimsJson = await wv.CoreWebView2.ExecuteScriptAsync(
-                    "JSON.stringify({w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight, dpr: window.devicePixelRatio})");
+                    "({w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight, dpr: window.devicePixelRatio})");
                 var dims = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(dimsJson);
                 int width = dims.GetProperty("w").GetInt32();
                 int height = dims.GetProperty("h").GetInt32();
@@ -1048,8 +1058,8 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
                 byte[] imageBytes = Convert.FromBase64String(base64);
 
                 // Save dialog
-                var picker = new Windows.Storage.Pickers.FileSavePicker();
-                picker.SuggestedStartLocation = Windows.Storage.Pickers.PickerLocationId.PicturesLibrary;
+                var picker = new FileSavePicker();
+                picker.SuggestedStartLocation = PickerLocationId.PicturesLibrary;
                 picker.FileTypeChoices.Add("PNG Image", new List<string> { ".png" });
                 picker.SuggestedFileName = $"{_activeTab?.FileName ?? "screenshot"}_{DateTime.Now:yyyyMMdd_HHmmss}";
 
@@ -1057,15 +1067,20 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
                 WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
 
                 var file = await picker.PickSaveFileAsync();
-                if (file == null) return;
+                if (file == null)
+                {
+                    this.Title = origTitle;
+                    return;
+                }
 
-                await File.WriteAllBytesAsync(file.Path, imageBytes);
+                // Use StorageFile API for MSIX sandbox compatibility
+                await FileIO.WriteBytesAsync(file, imageBytes);
 
                 // Show success notification
-                this.Title = $"Screenshot saved — {file.Name}";
+                this.Title = $"Screenshot saved \u2014 {file.Name}";
                 _ = Task.Run(async () =>
                 {
-                    await Task.Delay(2000);
+                    await Task.Delay(3000);
                     DispatcherQueue.TryEnqueue(() =>
                     {
                         if (_activeTab != null)
@@ -1078,6 +1093,20 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
             catch (Exception ex)
             {
                 Logger.LogError("Full page screenshot failed", ex);
+                this.Title = origTitle;
+
+                var dialog = new ContentDialog
+                {
+                    Title = "Screenshot Failed",
+                    Content = $"Could not capture screenshot: {ex.Message}",
+                    CloseButtonText = "OK",
+                    XamlRoot = this.Content.XamlRoot
+                };
+                await dialog.ShowAsync();
+            }
+            finally
+            {
+                ScreenshotButton.IsEnabled = true;
             }
         }
 
