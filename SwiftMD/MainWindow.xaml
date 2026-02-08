@@ -17,10 +17,11 @@
     <Grid x:Name="MainGrid" AllowDrop="True" DragOver="MainGrid_DragOver" Drop="MainGrid_Drop">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
 
-        <!-- Title Bar -->
+        <!-- Title Bar (Row 0) -->
         <Grid x:Name="TitleBar" Height="40">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto" />
@@ -43,6 +44,10 @@
                         Background="Transparent" BorderThickness="0" Padding="6" Width="32" Height="32">
                     <FontIcon Glyph="&#xE8E5;" FontSize="14" />
                 </Button>
+                <Button x:Name="EditToggleButton" Click="EditToggleButton_Click" ToolTipService.ToolTip="Toggle Edit Mode (Ctrl+E)"
+                        Background="Transparent" BorderThickness="0" Padding="6" Width="32" Height="32">
+                    <FontIcon x:Name="EditToggleIcon" Glyph="&#xE70F;" FontSize="14" />
+                </Button>
                 <Button x:Name="ZoomOutButton" Click="ZoomOutButton_Click" ToolTipService.ToolTip="Zoom Out (Ctrl+-)"
                         Background="Transparent" BorderThickness="0" Padding="6" Width="32" Height="32">
                     <FontIcon Glyph="&#xE71F;" FontSize="14" />
@@ -60,14 +65,32 @@
             </StackPanel>
         </Grid>
 
-        <!-- Main Content Area -->
-        <Grid Grid.Row="1">
+        <!-- Tab Bar (Row 1) -->
+        <TabView x:Name="TabBar" Grid.Row="1"
+                 IsAddTabButtonVisible="True"
+                 AddTabButtonClick="TabBar_AddTabButtonClick"
+                 TabCloseRequested="TabBar_TabCloseRequested"
+                 SelectionChanged="TabBar_SelectionChanged"
+                 CanDragTabs="True"
+                 CanReorderTabs="True"
+                 TabWidthMode="SizeToContent"
+                 VerticalAlignment="Top">
+            <TabView.TabStripHeader>
+                <Grid />
+            </TabView.TabStripHeader>
+            <TabView.TabStripFooter>
+                <Grid />
+            </TabView.TabStripFooter>
+        </TabView>
+
+        <!-- Main Content Area (Row 2) -->
+        <Grid Grid.Row="2">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="250" MinWidth="200" />
+                <ColumnDefinition Width="250" MinWidth="150" />
                 <ColumnDefinition Width="Auto" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
-            
+
             <!-- Sidebar (TOC) -->
             <Border Grid.Column="0" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,1,0">
                 <Grid>
@@ -75,11 +98,7 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
-
-                    <!-- TOC Header -->
                     <TextBlock Grid.Row="0" Text="Table of Contents" Margin="16,12" FontWeight="SemiBold" Style="{StaticResource BodyStrongTextBlockStyle}" />
-
-                    <!-- TOC List -->
                     <ListView Grid.Row="1" x:Name="TocListView" ItemsSource="{x:Bind TocItems, Mode=OneWay}" SelectionMode="Single" SelectionChanged="TocListView_SelectionChanged">
                         <ListView.ItemTemplate>
                             <DataTemplate x:DataType="models:TocItem">
@@ -92,11 +111,40 @@
                 </Grid>
             </Border>
 
-            <!-- Splitter -->
+            <!-- TOC Splitter -->
             <sizers:GridSplitter Grid.Column="1" Width="8" ResizeBehavior="PreviousAndNext" ResizeDirection="Columns" />
 
-            <!-- Main Content (WebView2) -->
-            <controls:WebView2 x:Name="MarkdownWebView" Grid.Column="2" />
+            <!-- Content Panel (Read or Edit mode) -->
+            <Grid x:Name="ContentPanel" Grid.Column="2">
+                <!-- Read Mode: WebView2 only -->
+                <controls:WebView2 x:Name="MarkdownWebView" />
+
+                <!-- Edit Mode: split pane (hidden by default) -->
+                <Grid x:Name="EditModePanel" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <TextBox x:Name="EditorTextBox"
+                             Grid.Column="0"
+                             AcceptsReturn="True"
+                             TextWrapping="Wrap"
+                             IsSpellCheckEnabled="False"
+                             FontFamily="Cascadia Code, Cascadia Mono, Consolas, Courier New, monospace"
+                             FontSize="14"
+                             Padding="16,12"
+                             PlaceholderText="Type Markdown here..."
+                             ScrollViewer.VerticalScrollBarVisibility="Auto"
+                             TextChanged="EditorTextBox_TextChanged"
+                             BorderThickness="0" />
+
+                    <sizers:GridSplitter Grid.Column="1" Width="8" ResizeBehavior="PreviousAndNext" ResizeDirection="Columns" />
+
+                    <controls:WebView2 x:Name="PreviewWebView" Grid.Column="2" />
+                </Grid>
+            </Grid>
         </Grid>
     </Grid>
 </winuiex:WindowEx>

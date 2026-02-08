@@ -5,11 +5,11 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using ReadU.Helpers;
 using ReadU.Models;
-using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Input;
@@ -24,33 +24,37 @@ namespace ReadU
 {
     public sealed partial class MainWindow : WindowEx, IDisposable
     {
-        private record struct ParsedData(string Html, string Title, List<Models.TocItem> Toc);
+        #region Fields
 
-        public ObservableCollection<Models.TocItem> TocItems { get; } = new ObservableCollection<Models.TocItem>();
+        public ObservableCollection<TocItem> TocItems { get; } = new();
 
-        private string currentFilePath;
+        private readonly List<TabDocument> _tabs = new();
+        private TabDocument _activeTab;
+
         private SettingsWatcher _settingsWatcher;
         private MarkdownReaderModuleSettings _currentSettings;
-        private FileSystemWatcher _fileWatcher;
 
-        // Debounce: cancel previous reload if file changes again quickly
-        private CancellationTokenSource _debounceCts;
-        private const int DebounceDelayMs = 300;
-
-        // WebView2 readiness gate
+        // WebView2 readiness
         private bool _webViewReady;
-        private ParsedData? _pendingData;
+        private bool _previewWebViewReady;
 
-        // CSS-level zoom (font size percentage)
-        private int _zoomPercent = 100;
+        // Edit-mode debounce
+        private CancellationTokenSource _editDebounceCts;
+        private const int EditDebounceMs = 500;
+
+        // Zoom constants
         private const int ZoomStep = 10;
         private const int ZoomMin = 50;
         private const int ZoomMax = 200;
 
-        public MainWindow()
-            : this(null)
-        {
-        }
+        // Suppress tab-switch handler during programmatic changes
+        private bool _suppressTabSwitch;
+
+        #endregion
+
+        #region Construction / Dispose
+
+        public MainWindow() : this(null) { }
 
         public MainWindow(string filePath)
         {
@@ -59,13 +63,10 @@ namespace ReadU
             ExtendsContentIntoTitleBar = true;
             SetTitleBar(TitleBar);
 
-            currentFilePath = filePath;
             this.Closed += MainWindow_Closed;
-
-            // Keyboard shortcuts
             this.Content.KeyDown += OnKeyDown;
 
-            InitializeAsync();
+            InitializeAsync(filePath);
         }
 
         private void MainWindow_Closed(object sender, WindowEventArgs args)
@@ -76,49 +77,40 @@ namespace ReadU
         public void Dispose()
         {
             _settingsWatcher?.Dispose();
-            StopWatchingFile();
-            _debounceCts?.Cancel();
-            _debounceCts?.Dispose();
+            _editDebounceCts?.Cancel();
+            _editDebounceCts?.Dispose();
+            foreach (var tab in _tabs) tab.Dispose();
         }
 
-        private async void InitializeAsync()
+        #endregion
+
+        #region Initialization
+
+        private async void InitializeAsync(string filePath)
         {
-            // 1. Start WebView2 Initialization (IO/IPC bound) in parallel
+            // 1. Start WebView2 init
             var webViewInit = MarkdownWebView.EnsureCoreWebView2Async();
 
-            // Initialize settings
+            // 2. Settings
             _settingsWatcher = new SettingsWatcher();
             _settingsWatcher.SettingsChanged += OnSettingsChanged;
             _currentSettings = _settingsWatcher.ReadSettings();
 
-            // 2. Start Content Loading & Parsing (IO/CPU bound) in parallel
-            var contentTask = LoadContentAsync();
-
             try
             {
                 await webViewInit;
-
-                // Configure WebView2 settings for performance
-                var settings = MarkdownWebView.CoreWebView2.Settings;
-                settings.IsStatusBarEnabled = false;
-                settings.AreDevToolsEnabled = false;
-                settings.IsZoomControlEnabled = false;  // Disable built-in zoom — we use CSS-level zoom
-                settings.AreDefaultContextMenusEnabled = true;
-                settings.IsBuiltInErrorPageEnabled = false;
-                settings.IsPinchZoomEnabled = false;    // Disable pinch zoom too
-
+                ConfigureWebView(MarkdownWebView);
                 _webViewReady = true;
 
-                // If ApplyParsedData was called before WebView2 was ready, flush now
-                if (_pendingData.HasValue)
+                // 3. Open initial tab
+                if (!string.IsNullOrEmpty(filePath) && File.Exists(filePath))
                 {
-                    var pending = _pendingData.Value;
-                    _pendingData = null;
-                    MarkdownWebView.NavigateToString(pending.Html);
+                    await OpenFileInNewTabAsync(filePath);
                 }
-
-                var data = await contentTask;
-                ApplyParsedData(data);
+                else
+                {
+                    OpenWelcomeTab();
+                }
             }
             catch (Exception ex)
             {
@@ -126,26 +118,285 @@ namespace ReadU
             }
         }
 
-        private async Task<ParsedData> LoadContentAsync()
+        private static void ConfigureWebView(WebView2 wv)
         {
-            if (!string.IsNullOrEmpty(currentFilePath))
+            var s = wv.CoreWebView2.Settings;
+            s.IsStatusBarEnabled = false;
+            s.AreDevToolsEnabled = false;
+            s.IsZoomControlEnabled = false;
+            s.AreDefaultContextMenusEnabled = true;
+            s.IsBuiltInErrorPageEnabled = false;
+            s.IsPinchZoomEnabled = false;
+        }
+
+        #endregion
+
+        #region Tab Management
+
+        private void OpenWelcomeTab()
+        {
+            // Reuse existing welcome tab if present
+            var existing = _tabs.FirstOrDefault(t => t.IsWelcome);
+            if (existing != null)
             {
-                return await LoadMarkdownFromFileAsync(currentFilePath);
+                ActivateTab(existing);
+                return;
+            }
+
+            var tab = new TabDocument();
+            var (html, toc) = RenderWelcomePage();
+            tab.Content = null;
+            tab.RenderedHtml = html;
+            tab.Toc = toc;
+
+            AddTabAndActivate(tab);
+        }
+
+        private async Task OpenFileInNewTabAsync(string filePath)
+        {
+            // Deduplicate: if already open, just switch to it
+            var existing = _tabs.FirstOrDefault(t =>
+                t.FilePath != null && t.FilePath.Equals(filePath, StringComparison.OrdinalIgnoreCase));
+            if (existing != null)
+            {
+                ActivateTab(existing);
+                return;
+            }
+
+            var tab = new TabDocument { FilePath = filePath };
+            await LoadTabContentAsync(tab);
+            StartWatchingFile(tab);
+            AddTabAndActivate(tab);
+        }
+
+        private void AddTabAndActivate(TabDocument tab)
+        {
+            _tabs.Add(tab);
+
+            var tabItem = new TabViewItem
+            {
+                Header = tab.Header,
+                Tag = tab,
+                IsClosable = true
+            };
+
+            // Listen for header changes (modified indicator)
+            tab.PropertyChanged += (s, e) =>
+            {
+                if (e.PropertyName == nameof(TabDocument.Header))
+                {
+                    DispatcherQueue.TryEnqueue(() => tabItem.Header = tab.Header);
+                }
+            };
+
+            _suppressTabSwitch = true;
+            TabBar.TabItems.Add(tabItem);
+            TabBar.SelectedItem = tabItem;
+            _suppressTabSwitch = false;
+
+            ActivateTab(tab);
+        }
+
+        private void ActivateTab(TabDocument tab)
+        {
+            if (_activeTab == tab && _webViewReady) return;
+
+            // Save outgoing tab state
+            SaveActiveTabState();
+
+            _activeTab = tab;
+
+            // Select the correct TabViewItem
+            _suppressTabSwitch = true;
+            for (int i = 0; i < TabBar.TabItems.Count; i++)
+            {
+                if (TabBar.TabItems[i] is TabViewItem tvi && tvi.Tag == tab)
+                {
+                    TabBar.SelectedIndex = i;
+                    break;
+                }
+            }
+            _suppressTabSwitch = false;
+
+            // Restore UI
+            RestoreTabUI(tab);
+        }
+
+        private async void SaveActiveTabState()
+        {
+            if (_activeTab == null || !_webViewReady) return;
+
+            try
+            {
+                var wv = _activeTab.IsEditMode ? PreviewWebView : MarkdownWebView;
+                _activeTab.ScrollPosition = await GetScrollPosition(wv);
+            }
+            catch { }
+        }
+
+        private void RestoreTabUI(TabDocument tab)
+        {
+            // Title
+            this.Title = tab.IsWelcome
+                ? "READU.md - Welcome"
+                : $"{tab.FileName} - READU.md";
+
+            // TOC
+            TocItems.Clear();
+            if (tab.Toc != null)
+            {
+                foreach (var item in tab.Toc)
+                    TocItems.Add(item);
+            }
+
+            // Zoom
+            ZoomLevelText.Text = $"{tab.ZoomPercent}%";
+
+            // Edit mode UI
+            UpdateEditModeUI(tab.IsEditMode);
+
+            if (!_webViewReady) return;
+
+            // Content
+            if (tab.IsEditMode)
+            {
+                EditorTextBox.TextChanged -= EditorTextBox_TextChanged;
+                EditorTextBox.Text = tab.Content ?? string.Empty;
+                EditorTextBox.TextChanged += EditorTextBox_TextChanged;
+
+                NavigateWebView(PreviewWebView, tab.RenderedHtml, tab.ScrollPosition, tab.ZoomPercent);
             }
             else
             {
-                return LoadWelcomePage();
+                NavigateWebView(MarkdownWebView, tab.RenderedHtml, tab.ScrollPosition, tab.ZoomPercent);
             }
         }
 
-        private ParsedData LoadWelcomePage()
+        private async void NavigateWebView(WebView2 wv, string html, double scrollY, int zoom)
         {
-            string markdown = @"
+            if (wv == null || html == null) return;
+
+            // Lazy-init PreviewWebView
+            if (wv == PreviewWebView && !_previewWebViewReady)
+            {
+                try
+                {
+                    await PreviewWebView.EnsureCoreWebView2Async();
+                    ConfigureWebView(PreviewWebView);
+                    _previewWebViewReady = true;
+                }
+                catch (Exception ex)
+                {
+                    Logger.LogError("Failed to init PreviewWebView", ex);
+                    return;
+                }
+            }
+
+            if (wv.CoreWebView2 == null) return;
+
+            // One-shot handler for post-navigation setup
+            void handler(object s, CoreWebView2NavigationCompletedEventArgs e)
+            {
+                wv.CoreWebView2.NavigationCompleted -= handler;
+                _ = ApplyPostNavigationAsync(wv, scrollY, zoom);
+            }
+            wv.CoreWebView2.NavigationCompleted += handler;
+
+            wv.NavigateToString(html);
+        }
+
+        private static async Task ApplyPostNavigationAsync(WebView2 wv, double scrollY, int zoom)
+        {
+            try
+            {
+                await Task.Delay(30);
+                if (wv.CoreWebView2 == null) return;
+                if (zoom != 100)
+                    await wv.CoreWebView2.ExecuteScriptAsync($"document.body.style.zoom='{zoom}%';");
+                if (scrollY > 0)
+                    await wv.CoreWebView2.ExecuteScriptAsync($"window.scrollTo(0,{scrollY});");
+            }
+            catch { }
+        }
+
+        private void RemoveTab(TabDocument tab)
+        {
+            tab.Dispose();
+            _tabs.Remove(tab);
+
+            for (int i = TabBar.TabItems.Count - 1; i >= 0; i--)
+            {
+                if (TabBar.TabItems[i] is TabViewItem tvi && tvi.Tag == tab)
+                {
+                    _suppressTabSwitch = true;
+                    TabBar.TabItems.RemoveAt(i);
+                    _suppressTabSwitch = false;
+                    break;
+                }
+            }
+
+            if (_activeTab == tab)
+            {
+                _activeTab = null;
+                if (_tabs.Count > 0)
+                {
+                    ActivateTab(_tabs[^1]);
+                }
+                else
+                {
+                    OpenWelcomeTab();
+                }
+            }
+        }
+
+        #endregion
+
+        #region Content Loading
+
+        private async Task LoadTabContentAsync(TabDocument tab)
+        {
+            if (tab.FilePath == null || !File.Exists(tab.FilePath))
+            {
+                var (html, toc) = RenderWelcomePage();
+                tab.RenderedHtml = html;
+                tab.Toc = toc;
+                return;
+            }
+
+            try
+            {
+                string markdown = await File.ReadAllTextAsync(tab.FilePath);
+                tab.Content = markdown;
+                RenderTabContent(tab);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError($"Error loading {tab.FilePath}", ex);
+            }
+        }
+
+        private void RenderTabContent(TabDocument tab)
+        {
+            if (tab.Content == null) return;
+
+            bool mermaid = _currentSettings?.Properties?.EnableMermaid?.Value ?? true;
+            int fontSize = _currentSettings?.Properties?.FontSize?.Value ?? 14;
+
+            tab.Toc = MarkdownParser.ExtractTableOfContents(tab.Content);
+            tab.RenderedHtml = MarkdownParser.ParseMarkdown(
+                tab.Content, tab.FilePath ?? "Welcome", mermaid, fontSize);
+        }
+
+        private (string Html, List<TocItem> Toc) RenderWelcomePage()
+        {
+            string md = @"
 # Welcome to READU.md
 
-A fast, lightweight Markdown reader built with **Fluent Design**.
+A fast, lightweight Markdown reader & editor built with **Fluent Design**.
 
 ## Features
+* **Multi-Tab** — open multiple files simultaneously (like Notepad++)
+* **Edit Mode** — side-by-side Markdown editor + live preview (`Ctrl+E`)
 * **Table of Contents** — auto-generated sidebar navigation
 * **Syntax Highlighting** — powered by highlight.js
 * **Mermaid.js** — flowcharts, sequence diagrams, and more
@@ -153,132 +404,129 @@ A fast, lightweight Markdown reader built with **Fluent Design**.
 * **Drag & Drop** — drop any `.md` file to open it
 * **Hot Reload** — automatically refreshes when the file changes
 * **PDF Export** — press `Ctrl+P` to print/export as PDF
-* **File Association** — double-click `.md` files to open
 
 ## How to use
 1. Drag a Markdown file onto this window
-2. Or right-click a `.md` file in Explorer → **Open with** → READU.md
+2. Or press `Ctrl+O` to open a file
+3. Press `Ctrl+E` to switch to Edit mode
 
 ## Keyboard Shortcuts
 | Shortcut | Action |
 |---|---|
-| `Ctrl+O` | Open file |
+| `Ctrl+O` | Open file (new tab) |
+| `Ctrl+W` | Close current tab |
+| `Ctrl+Tab` | Next tab |
+| `Ctrl+Shift+Tab` | Previous tab |
+| `Ctrl+E` | Toggle Edit / Read mode |
+| `Ctrl+S` | Save file (edit mode) |
+| `Ctrl+N` | New blank tab (edit mode) |
 | `Ctrl+P` | Print / Export PDF |
-| `Ctrl+W` | Close window |
-| `Ctrl++` / `Ctrl+-` | Zoom in / out (content only) |
+| `Ctrl++` / `Ctrl+-` | Zoom in / out |
 | `Ctrl+0` | Reset zoom to 100% |
-| `Ctrl+Home` | Back to Welcome page |
+| `Ctrl+Home` | Open Welcome page |
 
 ---
-*READU.md v1.0.0*
+*READU.md v2.0.0*
 ";
-
-            return ParseMarkdownContent(markdown, "Welcome", "READU.md - Welcome");
-        }
-
-        private async Task<ParsedData> LoadMarkdownFromFileAsync(string filePath)
-        {
-            try
-            {
-                if (!File.Exists(filePath))
-                {
-                    Logger.LogError($"File not found: {filePath}");
-                    return LoadWelcomePage();
-                }
-
-                StartWatchingFile(filePath);
-
-                return await Task.Run(async () =>
-                {
-                    string markdown = await File.ReadAllTextAsync(filePath);
-                    string fileName = Path.GetFileName(filePath);
-                    string title = $"{fileName} - READU.md";
-                    return ParseMarkdownContent(markdown, filePath, title);
-                });
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError($"Error loading file {filePath}", ex);
-                var fallback = LoadWelcomePage();
-                return fallback with { Title = "READU.md - Error Loading File" };
-            }
-        }
-
-        private ParsedData ParseMarkdownContent(string markdown, string filePath, string title)
-        {
-            bool enableMermaid = _currentSettings?.Properties?.EnableMermaid?.Value ?? true;
+            bool mermaid = _currentSettings?.Properties?.EnableMermaid?.Value ?? true;
             int fontSize = _currentSettings?.Properties?.FontSize?.Value ?? 14;
-
-            var toc = MarkdownParser.ExtractTableOfContents(markdown);
-            string html = MarkdownParser.ParseMarkdown(markdown, filePath, enableMermaid, fontSize);
-
-            return new ParsedData(html, title, toc);
+            var toc = MarkdownParser.ExtractTableOfContents(md);
+            var html = MarkdownParser.ParseMarkdown(md, "Welcome", mermaid, fontSize);
+            return (html, toc);
         }
+
+        #endregion
+
+        #region Settings
 
         private void OnSettingsChanged(object sender, MarkdownReaderModuleSettings newSettings)
         {
-            DispatcherQueue.TryEnqueue(async () =>
+            DispatcherQueue.TryEnqueue(() =>
             {
                 _currentSettings = newSettings;
-                await ReloadCurrentContent();
+                if (_activeTab != null && _activeTab.Content != null)
+                {
+                    RenderTabContent(_activeTab);
+                    RestoreTabUI(_activeTab);
+                }
             });
         }
 
-        private async Task ReloadCurrentContent()
-        {
-            ParsedData data;
-            if (!string.IsNullOrEmpty(currentFilePath) && File.Exists(currentFilePath))
-            {
-                // Save scroll position before reload
-                double scrollY = await GetScrollPosition();
-                data = await LoadMarkdownFromFileAsync(currentFilePath);
-                ApplyParsedData(data);
-                // Restore scroll position after content loads
-                await RestoreScrollPosition(scrollY);
-            }
-            else
-            {
-                data = LoadWelcomePage();
-                ApplyParsedData(data);
-            }
-        }
+        #endregion
 
-        private void ApplyParsedData(ParsedData data)
-        {
-            this.Title = data.Title;
-
-            TocItems.Clear();
-            foreach (var item in data.Toc)
-            {
-                TocItems.Add(item);
-            }
-
-            if (_webViewReady)
-            {
-                MarkdownWebView.NavigateToString(data.Html);
-            }
-            else
-            {
-                // WebView2 not ready yet — buffer the data for later
-                _pendingData = data;
-            }
-        }
+        #region TOC
 
         private async void TocListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            if (TocListView.SelectedItem is Models.TocItem selectedItem)
+            if (TocListView.SelectedItem is TocItem selectedItem)
             {
                 try
                 {
-                    string script = $"document.getElementById('{selectedItem.Id}')?.scrollIntoView({{ behavior: 'smooth', block: 'start' }});";
-                    await MarkdownWebView.CoreWebView2.ExecuteScriptAsync(script);
+                    var wv = _activeTab?.IsEditMode == true ? PreviewWebView : MarkdownWebView;
+                    if (wv?.CoreWebView2 != null)
+                    {
+                        await wv.CoreWebView2.ExecuteScriptAsync(
+                            $"document.getElementById('{selectedItem.Id}')?.scrollIntoView({{behavior:'smooth',block:'start'}});");
+                    }
                 }
-                catch (Exception ex)
-                {
-                    Logger.LogError("Failed to scroll to TOC item", ex);
-                }
+                catch (Exception ex) { Logger.LogError("TOC scroll failed", ex); }
             }
         }
+
+        #endregion
+
+        #region Tab Event Handlers
+
+        private async void TabBar_AddTabButtonClick(TabView sender, object args)
+        {
+            await OpenFileDialogAsync();
+        }
+
+        private void TabBar_TabCloseRequested(TabView sender, TabViewTabCloseRequestedEventArgs args)
+        {
+            if (args.Tab.Tag is TabDocument tab)
+            {
+                CloseTab(tab);
+            }
+        }
+
+        private void TabBar_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (_suppressTabSwitch) return;
+            if (TabBar.SelectedItem is TabViewItem tvi && tvi.Tag is TabDocument tab)
+            {
+                ActivateTab(tab);
+            }
+        }
+
+        private async void CloseTab(TabDocument tab)
+        {
+            if (tab.IsModified)
+            {
+                var dialog = new ContentDialog
+                {
+                    Title = "Unsaved Changes",
+                    Content = $"Save changes to {tab.FileName}?",
+                    PrimaryButtonText = "Save",
+                    SecondaryButtonText = "Don't Save",
+                    CloseButtonText = "Cancel",
+                    XamlRoot = this.Content.XamlRoot,
+                    DefaultButton = ContentDialogButton.Primary
+                };
+                var result = await dialog.ShowAsync();
+                if (result == ContentDialogResult.Primary)
+                {
+                    await SaveActiveFileAsync();
+                }
+                else if (result == ContentDialogResult.None)
+                {
+                    return; // Cancel
+                }
+            }
+            RemoveTab(tab);
+        }
+
+        #endregion
 
         #region Drag & Drop
 
@@ -293,128 +541,249 @@ A fast, lightweight Markdown reader built with **Fluent Design**.
 
         private async void MainGrid_Drop(object sender, DragEventArgs e)
         {
-            if (e.DataView.Contains(StandardDataFormats.StorageItems))
+            if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
+
+            var items = await e.DataView.GetStorageItemsAsync();
+            foreach (var item in items)
             {
-                var items = await e.DataView.GetStorageItemsAsync();
-                if (items.Count > 0 && items[0] is StorageFile file)
+                if (item is StorageFile file && IsMarkdownFile(file.Path))
                 {
-                    string path = file.Path;
-                    string ext = Path.GetExtension(path);
-                    if (ext.Equals(".md", StringComparison.OrdinalIgnoreCase) ||
-                        ext.Equals(".markdown", StringComparison.OrdinalIgnoreCase) ||
-                        ext.Equals(".mdown", StringComparison.OrdinalIgnoreCase) ||
-                        ext.Equals(".mkd", StringComparison.OrdinalIgnoreCase) ||
-                        ext.Equals(".txt", StringComparison.OrdinalIgnoreCase))
-                    {
-                        currentFilePath = path;
-                        var data = await LoadMarkdownFromFileAsync(currentFilePath);
-                        ApplyParsedData(data);
-                    }
+                    await OpenFileInNewTabAsync(file.Path);
                 }
             }
+        }
+
+        private static bool IsMarkdownFile(string path)
+        {
+            var ext = Path.GetExtension(path);
+            return ext.Equals(".md", StringComparison.OrdinalIgnoreCase)
+                || ext.Equals(".markdown", StringComparison.OrdinalIgnoreCase)
+                || ext.Equals(".mdown", StringComparison.OrdinalIgnoreCase)
+                || ext.Equals(".mkd", StringComparison.OrdinalIgnoreCase)
+                || ext.Equals(".txt", StringComparison.OrdinalIgnoreCase);
         }
 
         #endregion
 
         #region File Watcher (Hot Reload)
 
-        private void StartWatchingFile(string filePath)
+        private void StartWatchingFile(TabDocument tab)
         {
-            StopWatchingFile();
-
-            if (string.IsNullOrEmpty(filePath) || !File.Exists(filePath)) return;
+            StopWatchingFile(tab);
+            if (tab.FilePath == null || !File.Exists(tab.FilePath)) return;
 
             try
             {
-                string dir = Path.GetDirectoryName(filePath);
-                string file = Path.GetFileName(filePath);
-                _fileWatcher = new FileSystemWatcher(dir, file)
+                string dir = Path.GetDirectoryName(tab.FilePath);
+                string file = Path.GetFileName(tab.FilePath);
+                tab.Watcher = new FileSystemWatcher(dir, file)
                 {
                     NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.FileName | NotifyFilters.Size,
                     EnableRaisingEvents = true
                 };
-                _fileWatcher.Changed += OnFileChanged;
-                _fileWatcher.Renamed += OnFileChanged;
+                tab.Watcher.Changed += (s, ev) => OnTabFileChanged(tab, ev);
+                tab.Watcher.Renamed += (s, ev) => OnTabFileChanged(tab, ev);
             }
-            catch (Exception ex)
+            catch (Exception ex) { Logger.LogError("File watcher start failed", ex); }
+        }
+
+        private static void StopWatchingFile(TabDocument tab)
+        {
+            if (tab.Watcher != null)
             {
-                Logger.LogError("Failed to start file watcher", ex);
+                tab.Watcher.EnableRaisingEvents = false;
+                tab.Watcher.Dispose();
+                tab.Watcher = null;
             }
         }
 
-        private void StopWatchingFile()
+        private void OnTabFileChanged(TabDocument tab, FileSystemEventArgs e)
         {
-            if (_fileWatcher != null)
-            {
-                _fileWatcher.EnableRaisingEvents = false;
-                _fileWatcher.Changed -= OnFileChanged;
-                _fileWatcher.Renamed -= OnFileChanged;
-                _fileWatcher.Dispose();
-                _fileWatcher = null;
-            }
-        }
-
-        private void OnFileChanged(object sender, FileSystemEventArgs e)
-        {
-            // Cancel any pending debounce
-            _debounceCts?.Cancel();
-            _debounceCts?.Dispose();
-            _debounceCts = new CancellationTokenSource();
-            var token = _debounceCts.Token;
+            tab.DebounceCts?.Cancel();
+            tab.DebounceCts?.Dispose();
+            tab.DebounceCts = new CancellationTokenSource();
+            var token = tab.DebounceCts.Token;
 
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    await Task.Delay(DebounceDelayMs, token);
+                    await Task.Delay(300, token);
                     if (token.IsCancellationRequested) return;
 
                     DispatcherQueue.TryEnqueue(async () =>
                     {
-                        if (currentFilePath == e.FullPath && File.Exists(currentFilePath))
-                        {
-                            await ReloadCurrentContent();
-                        }
+                        if (tab.FilePath == null || !File.Exists(tab.FilePath)) return;
+                        if (tab.IsEditMode && tab.IsModified) return;
+
+                        await LoadTabContentAsync(tab);
+
+                        if (_activeTab == tab)
+                            RestoreTabUI(tab);
                     });
                 }
-                catch (TaskCanceledException) { /* Expected when debounce cancels */ }
+                catch (TaskCanceledException) { }
             }, token);
         }
 
         #endregion
 
-        #region Scroll Position Preservation
+        #region Scroll Position
 
-        private async Task<double> GetScrollPosition()
+        private static async Task<double> GetScrollPosition(WebView2 wv)
         {
             try
             {
-                if (MarkdownWebView.CoreWebView2 != null)
+                if (wv?.CoreWebView2 != null)
                 {
-                    var result = await MarkdownWebView.CoreWebView2.ExecuteScriptAsync("window.scrollY || document.documentElement.scrollTop || 0");
-                    if (double.TryParse(result, out double scrollY))
-                        return scrollY;
+                    var r = await wv.CoreWebView2.ExecuteScriptAsync(
+                        "window.scrollY||document.documentElement.scrollTop||0");
+                    if (double.TryParse(r, out double v)) return v;
                 }
             }
-            catch { /* WebView not ready */ }
+            catch { }
             return 0;
         }
 
-        private Task RestoreScrollPosition(double scrollY)
+        #endregion
+
+        #region Edit Mode
+
+        private void UpdateEditModeUI(bool isEditMode)
         {
-            if (scrollY <= 0) return Task.CompletedTask;
+            if (isEditMode)
+            {
+                MarkdownWebView.Visibility = Visibility.Collapsed;
+                EditModePanel.Visibility = Visibility.Visible;
+                EditToggleIcon.Glyph = "\uE7B3"; // Eye icon → read
+            }
+            else
+            {
+                EditModePanel.Visibility = Visibility.Collapsed;
+                MarkdownWebView.Visibility = Visibility.Visible;
+                EditToggleIcon.Glyph = "\uE70F"; // Pencil → edit
+            }
+        }
+
+        private async void ToggleEditMode()
+        {
+            if (_activeTab == null || _activeTab.IsWelcome) return;
+
+            _activeTab.IsEditMode = !_activeTab.IsEditMode;
+
+            if (_activeTab.IsEditMode)
+            {
+                // Entering edit mode
+                if (_activeTab.Content == null && _activeTab.FilePath != null)
+                    _activeTab.Content = await File.ReadAllTextAsync(_activeTab.FilePath);
+
+                EditorTextBox.TextChanged -= EditorTextBox_TextChanged;
+                EditorTextBox.Text = _activeTab.Content ?? string.Empty;
+                EditorTextBox.TextChanged += EditorTextBox_TextChanged;
+            }
+            else
+            {
+                // Leaving edit mode — persist scroll
+                _activeTab.ScrollPosition = await GetScrollPosition(PreviewWebView);
+            }
+
+            RestoreTabUI(_activeTab);
+        }
+
+        private void EditorTextBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (_activeTab == null || !_activeTab.IsEditMode) return;
+
+            _activeTab.Content = EditorTextBox.Text;
+            _activeTab.IsModified = true;
+
+            // Debounced preview update
+            _editDebounceCts?.Cancel();
+            _editDebounceCts?.Dispose();
+            _editDebounceCts = new CancellationTokenSource();
+            var token = _editDebounceCts.Token;
+
+            _ = Task.Run(async () =>
+            {
+                try
+                {
+                    await Task.Delay(EditDebounceMs, token);
+                    if (token.IsCancellationRequested) return;
+
+                    DispatcherQueue.TryEnqueue(() =>
+                    {
+                        if (_activeTab == null || !_activeTab.IsEditMode) return;
+
+                        RenderTabContent(_activeTab);
+
+                        // Update TOC
+                        TocItems.Clear();
+                        if (_activeTab.Toc != null)
+                            foreach (var item in _activeTab.Toc)
+                                TocItems.Add(item);
+
+                        // Update preview
+                        if (PreviewWebView?.CoreWebView2 != null && _activeTab.RenderedHtml != null)
+                            PreviewWebView.NavigateToString(_activeTab.RenderedHtml);
+                    });
+                }
+                catch (TaskCanceledException) { }
+            }, token);
+        }
+
+        private async Task SaveActiveFileAsync()
+        {
+            if (_activeTab == null) return;
+
+            // New tab without file path — Save As
+            if (_activeTab.FilePath == null)
+            {
+                var picker = new FileSavePicker();
+                picker.SuggestedStartLocation = PickerLocationId.DocumentsLibrary;
+                picker.FileTypeChoices.Add("Markdown", new List<string> { ".md" });
+                picker.SuggestedFileName = "Untitled";
+
+                var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
+                WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+
+                var file = await picker.PickSaveFileAsync();
+                if (file == null) return;
+
+                _activeTab.FilePath = file.Path;
+                StartWatchingFile(_activeTab);
+            }
 
             try
             {
-                // Wait for content to render, then scroll
-                MarkdownWebView.CoreWebView2.NavigationCompleted += async (s, e) =>
-                {
-                    await Task.Delay(50); // Short delay for DOM to settle
-                    await MarkdownWebView.CoreWebView2.ExecuteScriptAsync($"window.scrollTo(0, {scrollY});");
-                };
+                // Temporarily disable watcher to avoid self-trigger
+                if (_activeTab.Watcher != null)
+                    _activeTab.Watcher.EnableRaisingEvents = false;
+
+                await File.WriteAllTextAsync(_activeTab.FilePath, _activeTab.Content ?? string.Empty);
+                _activeTab.IsModified = false;
+
+                if (_activeTab.Watcher != null)
+                    _activeTab.Watcher.EnableRaisingEvents = true;
+
+                // Update title
+                this.Title = $"{_activeTab.FileName} - READU.md";
             }
-            catch { /* Best effort */ }
-            return Task.CompletedTask;
+            catch (Exception ex)
+            {
+                Logger.LogError($"Save failed: {_activeTab.FilePath}", ex);
+            }
+        }
+
+        private void NewBlankTab()
+        {
+            var tab = new TabDocument
+            {
+                Content = "# New Document\n\n",
+                IsEditMode = true,
+                IsModified = true
+            };
+            RenderTabContent(tab);
+            AddTabAndActivate(tab);
         }
 
         #endregion
@@ -423,9 +792,10 @@ A fast, lightweight Markdown reader built with **Fluent Design**.
 
         private async void OnKeyDown(object sender, KeyRoutedEventArgs e)
         {
-            // Check for Ctrl modifier
             var ctrl = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Control);
             bool isCtrl = ctrl.HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
+            var shift = Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(VirtualKey.Shift);
+            bool isShift = shift.HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down);
 
             if (!isCtrl) return;
 
@@ -443,29 +813,54 @@ A fast, lightweight Markdown reader built with **Fluent Design**.
 
                 case VirtualKey.W:
                     e.Handled = true;
-                    this.Close();
+                    if (_activeTab != null) CloseTab(_activeTab);
+                    break;
+
+                case VirtualKey.E:
+                    e.Handled = true;
+                    ToggleEditMode();
+                    break;
+
+                case VirtualKey.S:
+                    e.Handled = true;
+                    await SaveActiveFileAsync();
+                    break;
+
+                case VirtualKey.N:
+                    e.Handled = true;
+                    NewBlankTab();
                     break;
 
                 case VirtualKey.Home:
                     e.Handled = true;
-                    GoHome();
+                    OpenWelcomeTab();
                     break;
 
-                // Ctrl+= or Ctrl+Plus (OEM_PLUS is =+ key, Add is numpad +)
-                case (VirtualKey)187:      // = / + key (OEM_PLUS / VK_OEM_PLUS)
-                case VirtualKey.Add:       // Numpad +
+                case VirtualKey.Tab:
+                    e.Handled = true;
+                    if (TabBar.TabItems.Count > 1)
+                    {
+                        int idx = TabBar.SelectedIndex;
+                        if (isShift)
+                            idx = (idx - 1 + TabBar.TabItems.Count) % TabBar.TabItems.Count;
+                        else
+                            idx = (idx + 1) % TabBar.TabItems.Count;
+                        TabBar.SelectedIndex = idx;
+                    }
+                    break;
+
+                case (VirtualKey)187:
+                case VirtualKey.Add:
                     e.Handled = true;
                     await ZoomInAsync();
                     break;
 
-                // Ctrl+- (OEM_MINUS is -_ key, Subtract is numpad -)
-                case (VirtualKey)189:      // - / _ key (OEM_MINUS / VK_OEM_MINUS)
-                case VirtualKey.Subtract:  // Numpad -
+                case (VirtualKey)189:
+                case VirtualKey.Subtract:
                     e.Handled = true;
                     await ZoomOutAsync();
                     break;
 
-                // Ctrl+0 to reset zoom
                 case VirtualKey.Number0:
                 case VirtualKey.NumberPad0:
                     e.Handled = true;
@@ -485,118 +880,76 @@ A fast, lightweight Markdown reader built with **Fluent Design**.
                 picker.FileTypeFilter.Add(".mkd");
                 picker.FileTypeFilter.Add(".txt");
 
-                // Initialize the picker with the window handle
                 var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(this);
                 WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
 
                 var file = await picker.PickSingleFileAsync();
                 if (file != null)
-                {
-                    currentFilePath = file.Path;
-                    var data = await LoadMarkdownFromFileAsync(currentFilePath);
-                    ApplyParsedData(data);
-                }
+                    await OpenFileInNewTabAsync(file.Path);
             }
-            catch (Exception ex)
-            {
-                Logger.LogError("Failed to open file dialog", ex);
-            }
+            catch (Exception ex) { Logger.LogError("Open file dialog failed", ex); }
         }
 
         private async Task PrintAsync()
         {
             try
             {
-                if (MarkdownWebView.CoreWebView2 != null)
-                {
-                    // Use WebView2's built-in print dialog
-                    await MarkdownWebView.CoreWebView2.ExecuteScriptAsync("window.print();");
-                }
+                var wv = _activeTab?.IsEditMode == true ? PreviewWebView : MarkdownWebView;
+                if (wv?.CoreWebView2 != null)
+                    await wv.CoreWebView2.ExecuteScriptAsync("window.print();");
             }
-            catch (Exception ex)
-            {
-                Logger.LogError("Print failed", ex);
-            }
+            catch (Exception ex) { Logger.LogError("Print failed", ex); }
         }
 
         #endregion
 
-        #region Zoom (CSS-level)
+        #region Zoom (CSS-level, per-tab)
 
         private async Task ZoomInAsync()
         {
-            if (_zoomPercent < ZoomMax)
-            {
-                _zoomPercent += ZoomStep;
-                await ApplyZoomAsync();
-            }
+            if (_activeTab == null || _activeTab.ZoomPercent >= ZoomMax) return;
+            _activeTab.ZoomPercent += ZoomStep;
+            await ApplyZoomAsync();
         }
 
         private async Task ZoomOutAsync()
         {
-            if (_zoomPercent > ZoomMin)
-            {
-                _zoomPercent -= ZoomStep;
-                await ApplyZoomAsync();
-            }
+            if (_activeTab == null || _activeTab.ZoomPercent <= ZoomMin) return;
+            _activeTab.ZoomPercent -= ZoomStep;
+            await ApplyZoomAsync();
         }
 
         private async Task ResetZoomAsync()
         {
-            _zoomPercent = 100;
+            if (_activeTab == null) return;
+            _activeTab.ZoomPercent = 100;
             await ApplyZoomAsync();
         }
 
         private async Task ApplyZoomAsync()
         {
-            ZoomLevelText.Text = $"{_zoomPercent}%";
+            if (_activeTab == null) return;
+            ZoomLevelText.Text = $"{_activeTab.ZoomPercent}%";
             try
             {
-                if (MarkdownWebView.CoreWebView2 != null)
-                {
-                    await MarkdownWebView.CoreWebView2.ExecuteScriptAsync(
-                        $"document.body.style.zoom = '{_zoomPercent}%';");
-                }
+                var wv = _activeTab.IsEditMode ? PreviewWebView : MarkdownWebView;
+                if (wv?.CoreWebView2 != null)
+                    await wv.CoreWebView2.ExecuteScriptAsync(
+                        $"document.body.style.zoom='{_activeTab.ZoomPercent}%';");
             }
-            catch { /* WebView not ready */ }
+            catch { }
         }
 
         #endregion
 
         #region Title Bar Button Handlers
 
-        private void HomeButton_Click(object sender, RoutedEventArgs e)
-        {
-            GoHome();
-        }
-
-        private void GoHome()
-        {
-            StopWatchingFile();
-            currentFilePath = null;
-            var data = LoadWelcomePage();
-            ApplyParsedData(data);
-        }
-
-        private async void OpenButton_Click(object sender, RoutedEventArgs e)
-        {
-            await OpenFileDialogAsync();
-        }
-
-        private async void ZoomInButton_Click(object sender, RoutedEventArgs e)
-        {
-            await ZoomInAsync();
-        }
-
-        private async void ZoomOutButton_Click(object sender, RoutedEventArgs e)
-        {
-            await ZoomOutAsync();
-        }
-
-        private async void PrintButton_Click(object sender, RoutedEventArgs e)
-        {
-            await PrintAsync();
-        }
+        private void HomeButton_Click(object sender, RoutedEventArgs e) => OpenWelcomeTab();
+        private async void OpenButton_Click(object sender, RoutedEventArgs e) => await OpenFileDialogAsync();
+        private void EditToggleButton_Click(object sender, RoutedEventArgs e) => ToggleEditMode();
+        private async void ZoomInButton_Click(object sender, RoutedEventArgs e) => await ZoomInAsync();
+        private async void ZoomOutButton_Click(object sender, RoutedEventArgs e) => await ZoomOutAsync();
+        private async void PrintButton_Click(object sender, RoutedEventArgs e) => await PrintAsync();
 
         #endregion
     }
