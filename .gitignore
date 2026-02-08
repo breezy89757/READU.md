@@ -15,3 +15,6 @@ xaml_out.log
 *.metadata.json
 *.resolved
 *.resolved.*
+
+# Planning docs (not for release)
+PHASE2_PLAN.md
