@@ -41,3 +41,11 @@ BundleArtifacts/
 # JetBrains
 .idea/
 *.DotSettings*
+
+# Release builds
+release/
+
+# Recordings
+*.mp4
+*.webm
+*.mov

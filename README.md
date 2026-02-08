@@ -6,7 +6,15 @@ A fast, lightweight Markdown reader & editor for Windows, built with **Fluent De
 ![WinUI 3](https://img.shields.io/badge/WinUI-3-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 
-<!-- ![Screenshot](docs/screenshot.png) -->
+## Screenshots
+
+| Features & TOC | Mermaid Diagrams |
+|:---:|:---:|
+| ![Features](docs/01-features.png) | ![Mermaid](docs/02-mermaid.png) |
+
+| Dark Mode | Edit Mode (Split View) |
+|:---:|:---:|
+| ![Dark Mode](docs/03-dark-mode.png) | ![Edit Mode](docs/04-edit-mode.png) |
 
 ## Features
 
@@ -22,6 +30,7 @@ A fast, lightweight Markdown reader & editor for Windows, built with **Fluent De
 - **Hot Reload** — automatically refreshes when the file changes externally
 - **Scroll & Zoom Persistence** — per-tab scroll position and zoom level preserved across tab switches
 - **Print / PDF Export** — `Ctrl+P` to print or save as PDF
+- **Full Page Screenshot** — capture the entire rendered page as PNG (`Ctrl+Shift+S`)
 - **File Association** — double-click `.md` files to open in READU.md
 - **Lightweight** — minimal memory footprint, instant startup with pre-loaded CDN shell
 
@@ -37,6 +46,7 @@ A fast, lightweight Markdown reader & editor for Windows, built with **Fluent De
 | `Ctrl+S` | Save file (edit mode) |
 | `Ctrl+N` | New blank tab (edit mode) |
 | `Ctrl+P` | Print / Export PDF |
+| `Ctrl+Shift+S` | Full page screenshot |
 | `Ctrl+` `+` / `-` | Zoom in / out |
 | `Ctrl+0` | Reset zoom to 100% |
 | `Ctrl+Home` | Open Welcome page |
