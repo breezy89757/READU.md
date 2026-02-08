@@ -1,0 +1,103 @@
+<winuiex:WindowEx
+    x:Class="ReadU.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:local="using:ReadU"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:winuiex="using:WinUIEx"
+    xmlns:controls="using:Microsoft.UI.Xaml.Controls"
+    xmlns:sizers="using:CommunityToolkit.WinUI.Controls"
+    xmlns:models="using:ReadU.Models"
+    MinWidth="800"
+    MinHeight="600"
+    mc:Ignorable="d"
+    Title="READU.md">
+
+    <Grid x:Name="MainGrid" AllowDrop="True" DragOver="MainGrid_DragOver" Drop="MainGrid_Drop">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Title Bar -->
+        <Grid x:Name="TitleBar" Height="40">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+
+            <!-- App Icon + Title -->
+            <Image Grid.Column="0" Source="Images/Square44x44Logo.png" Width="16" Height="16" Margin="12,0,4,0" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="1" Text="READU.md" VerticalAlignment="Center" Style="{StaticResource CaptionTextBlockStyle}"/>
+
+            <!-- Title Bar Buttons (non-draggable) -->
+            <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="2" Margin="0,0,140,0" VerticalAlignment="Center">
+                <Button x:Name="HomeButton" Click="HomeButton_Click" ToolTipService.ToolTip="Welcome Page (Home)"
+                        Background="Transparent" BorderThickness="0" Padding="6" Width="32" Height="32">
+                    <FontIcon Glyph="&#xE80F;" FontSize="14" />
+                </Button>
+                <Button x:Name="OpenButton" Click="OpenButton_Click" ToolTipService.ToolTip="Open File (Ctrl+O)"
+                        Background="Transparent" BorderThickness="0" Padding="6" Width="32" Height="32">
+                    <FontIcon Glyph="&#xE8E5;" FontSize="14" />
+                </Button>
+                <Button x:Name="ZoomOutButton" Click="ZoomOutButton_Click" ToolTipService.ToolTip="Zoom Out (Ctrl+-)"
+                        Background="Transparent" BorderThickness="0" Padding="6" Width="32" Height="32">
+                    <FontIcon Glyph="&#xE71F;" FontSize="14" />
+                </Button>
+                <TextBlock x:Name="ZoomLevelText" Text="100%" VerticalAlignment="Center" Margin="4,0" Width="36" TextAlignment="Center"
+                           Style="{StaticResource CaptionTextBlockStyle}" />
+                <Button x:Name="ZoomInButton" Click="ZoomInButton_Click" ToolTipService.ToolTip="Zoom In (Ctrl++)"
+                        Background="Transparent" BorderThickness="0" Padding="6" Width="32" Height="32">
+                    <FontIcon Glyph="&#xE8A3;" FontSize="14" />
+                </Button>
+                <Button x:Name="PrintButton" Click="PrintButton_Click" ToolTipService.ToolTip="Print (Ctrl+P)"
+                        Background="Transparent" BorderThickness="0" Padding="6" Width="32" Height="32">
+                    <FontIcon Glyph="&#xE749;" FontSize="14" />
+                </Button>
+            </StackPanel>
+        </Grid>
+
+        <!-- Main Content Area -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="250" MinWidth="200" />
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            
+            <!-- Sidebar (TOC) -->
+            <Border Grid.Column="0" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,1,0">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <!-- TOC Header -->
+                    <TextBlock Grid.Row="0" Text="Table of Contents" Margin="16,12" FontWeight="SemiBold" Style="{StaticResource BodyStrongTextBlockStyle}" />
+
+                    <!-- TOC List -->
+                    <ListView Grid.Row="1" x:Name="TocListView" ItemsSource="{x:Bind TocItems, Mode=OneWay}" SelectionMode="Single" SelectionChanged="TocListView_SelectionChanged">
+                        <ListView.ItemTemplate>
+                            <DataTemplate x:DataType="models:TocItem">
+                                <StackPanel Orientation="Horizontal" Margin="{x:Bind IndentMargin}">
+                                    <TextBlock Text="{x:Bind Title}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListView.ItemTemplate>
+                    </ListView>
+                </Grid>
+            </Border>
+
+            <!-- Splitter -->
+            <sizers:GridSplitter Grid.Column="1" Width="8" ResizeBehavior="PreviousAndNext" ResizeDirection="Columns" />
+
+            <!-- Main Content (WebView2) -->
+            <controls:WebView2 x:Name="MarkdownWebView" Grid.Column="2" />
+        </Grid>
+    </Grid>
+</winuiex:WindowEx>
+
