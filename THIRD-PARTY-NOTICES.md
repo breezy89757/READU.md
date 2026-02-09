@@ -119,9 +119,9 @@ Runtime components are redistributed under the terms of Microsoft's license.
 
 ---
 
-## highlight.js (CDN)
+## highlight.js
 
-Loaded at runtime via CDN (cdnjs.cloudflare.com), not bundled.
+Bundled locally (v11.9.0). Files: `Assets/js/highlight.min.js`, `Assets/css/github.min.css`, `Assets/css/github-dark.min.css`.
 
 - **License:** BSD 3-Clause
 - **Copyright:** © 2006 Ivan Sagalaev
@@ -161,9 +161,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ---
 
-## Mermaid.js (CDN)
+## Mermaid.js
 
-Loaded at runtime via CDN (cdn.jsdelivr.net), not bundled.
+Bundled locally (v11). File: `Assets/js/mermaid.min.js`.
 
 - **License:** MIT
 - **Copyright:** © 2014-2024 Knut Sveidqvist

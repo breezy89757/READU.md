@@ -1,5 +1,4 @@
-// READU.md - A lightweight Markdown reader
-// Licensed under the MIT License.
+// READU.md — Licensed under the MIT License.
 
 using System;
 using System.Collections.Generic;
@@ -12,75 +11,106 @@ using Markdig;
 using Markdig.Renderers.Html;
 using Markdig.Syntax;
 using Markdig.Syntax.Inlines;
+using ReadU.Models;
 
-namespace ReadU.Helpers
+namespace ReadU.Helpers;
+
+public static class MarkdownParser
 {
-    public static class MarkdownParser
+    // Thread-safe, reusable pipeline — built once at startup.
+    private static readonly MarkdownPipeline s_pipeline = new MarkdownPipelineBuilder()
+        .UseAdvancedExtensions()
+        .UseEmojiAndSmiley()
+        .UseYamlFrontMatter()
+        .UseAutoIdentifiers()
+        .Build();
+
+    /// <summary>
+    /// Shell HTML loaded once into WebView2. Contains styles, scripts, and the
+    /// <c>updateContent()</c> entry point. Body starts empty.
+    /// </summary>
+    public static string GetShellHtml(int fontSize = 14)
     {
-        // Cache the pipeline — it's thread-safe and reusable
-        private static readonly MarkdownPipeline s_renderPipeline = new MarkdownPipelineBuilder()
-            .UseAdvancedExtensions()
-            .UseEmojiAndSmiley()
-            .UseYamlFrontMatter()
-            .UseAutoIdentifiers()
-            .Build();
+        var sb = new StringBuilder(4096);
+        sb.Append("<!DOCTYPE html><html><head><meta charset='utf-8'>");
+        sb.Append(GetStyles(fontSize));
+        sb.Append("</head><body>");
+        sb.Append(GetHighlightScript());
+        sb.Append(GetMermaidScript());
+        sb.Append(GetIncrementalUpdateScript());
+        sb.Append("</body></html>");
+        return sb.ToString();
+    }
 
-        private static readonly MarkdownPipeline s_tocPipeline = s_renderPipeline;
+    public static string ParseMarkdown(string markdownContent, string filePath,
+        bool enableMermaid = true, int fontSize = 14)
+    {
+        var htmlBody = Markdown.ToHtml(markdownContent, s_pipeline);
 
-        /// <summary>
-        /// Returns a shell HTML page with all styles, CDN scripts (highlight.js, mermaid.js),
-        /// and the incremental updateContent() function — but an empty body.
-        /// Navigate WebView2 to this once; then call updateContent(bodyHtml) for content changes.
-        /// </summary>
-        public static string GetShellHtml(int fontSize = 14)
-        {
-            var sb = new StringBuilder(4096);
-            sb.Append("<!DOCTYPE html><html><head><meta charset='utf-8'>");
-            sb.Append(GetStyles(fontSize));
-            sb.Append("</head><body>");
-            sb.Append(GetHighlightScript());
+        string baseDir = null;
+        if (!string.IsNullOrEmpty(filePath) && filePath is not "Welcome" && File.Exists(filePath))
+            baseDir = Path.GetDirectoryName(filePath);
+
+        var sb = new StringBuilder(htmlBody.Length + 4096);
+        sb.Append("<!DOCTYPE html><html><head><meta charset='utf-8'>");
+        sb.Append(GetStyles(fontSize));
+        sb.Append("</head><body>");
+
+        if (baseDir is not null)
+            sb.Append($"<base href='file:///{baseDir.Replace('\\', '/')}/'>");
+
+        sb.Append(htmlBody);
+
+        if (enableMermaid)
             sb.Append(GetMermaidScript());
-            sb.Append(GetIncrementalUpdateScript());
-            sb.Append("</body></html>");
-            return sb.ToString();
+
+        sb.Append(GetHighlightScript());
+        sb.Append(GetIncrementalUpdateScript());
+        sb.Append("</body></html>");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Body-only HTML for incremental DOM updates (no doctype / head / scripts).
+    /// </summary>
+    public static string ParseMarkdownBody(string markdownContent, string filePath,
+        bool enableMermaid = true)
+    {
+        var htmlBody = Markdown.ToHtml(markdownContent, s_pipeline);
+
+        if (enableMermaid)
+            htmlBody = AddMermaidHashes(htmlBody);
+
+        if (!string.IsNullOrEmpty(filePath) && filePath is not "Welcome" && File.Exists(filePath))
+        {
+            var baseDir = Path.GetDirectoryName(filePath);
+            htmlBody = $"<base href='file:///{baseDir.Replace('\\', '/')}/'>{htmlBody}";
         }
 
-        public static string ParseMarkdown(string markdownContent, string filePath, bool enableMermaid = true, int fontSize = 14)
+        return htmlBody;
+    }
+
+    public static List<TocItem> ExtractTableOfContents(string markdownContent)
+    {
+        List<TocItem> items = [];
+        var doc = Markdown.Parse(markdownContent, s_pipeline);
+
+        foreach (var heading in doc.Descendants<HeadingBlock>())
         {
-            string htmlBody = Markdown.ToHtml(markdownContent, s_renderPipeline);
-
-            // Resolve relative image paths to absolute file:// URIs
-            string baseDir = null;
-            if (!string.IsNullOrEmpty(filePath) && filePath != "Welcome" && File.Exists(filePath))
-            {
-                baseDir = Path.GetDirectoryName(filePath);
-            }
-
-            var sb = new StringBuilder(htmlBody.Length + 4096);
-            sb.Append("<!DOCTYPE html><html><head><meta charset='utf-8'>");
-            sb.Append(GetStyles(fontSize));
-            sb.Append("</head><body>");
-
-            if (baseDir != null)
-            {
-                sb.Append($"<base href='file:///{baseDir.Replace('\\', '/')}/'>");
-            }
-
-            sb.Append(htmlBody);
-
-            if (enableMermaid)
-                sb.Append(GetMermaidScript());
-
-            sb.Append(GetHighlightScript());
-            sb.Append(GetIncrementalUpdateScript());
-            sb.Append("</body></html>");
-
-            return sb.ToString();
+            var title = ExtractHeadingText(heading);
+            var id = heading.GetAttributes()?.Id ?? GenerateId(title);
+            items.Add(new TocItem { Title = title, Level = heading.Level, Id = id });
         }
 
-        private static string GetStyles(int fontSize)
-        {
-            return $@"
+        return items;
+    }
+
+    #region Styles & Scripts
+
+    private static string GetStyles(int fontSize)
+    {
+        return $@"
 <style>
 :root {{
     --text-color: #24292f;
@@ -164,93 +194,36 @@ tr:nth-child(even) {{ background-color: rgba(127,127,127,0.04); }}
 hr {{ border: none; border-top: 1px solid var(--border-color); margin: 2em 0; }}
 ul, ol {{ padding-left: 2em; }}
 li + li {{ margin-top: 0.25em; }}
-/* Task list checkboxes */
 input[type='checkbox'] {{ margin-right: 0.5em; }}
-/* Scrollbar styling */
 ::-webkit-scrollbar {{ width: 8px; height: 8px; }}
 ::-webkit-scrollbar-thumb {{ background: rgba(127,127,127,0.3); border-radius: 4px; }}
 ::-webkit-scrollbar-thumb:hover {{ background: rgba(127,127,127,0.5); }}
 </style>";
-        }
+    }
 
-        private static string GetMermaidScript()
-        {
-            return @"
-<script type=""module"">
-import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
-window.mermaid = mermaid;
+    private static string GetMermaidScript()
+    {
+        return @"
+<script src=""https://readu.assets/js/mermaid.min.js""></script>
+<script>
 mermaid.initialize({ startOnLoad: false, theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'default' });
 </script>";
-        }
+    }
 
-        private static string GetHighlightScript()
-        {
-            return @"
-<link rel=""stylesheet"" href=""https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css"" media=""(prefers-color-scheme: light)"">
-<link rel=""stylesheet"" href=""https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github-dark.min.css"" media=""(prefers-color-scheme: dark)"">
-<script src=""https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js""></script>
+    private static string GetHighlightScript()
+    {
+        return @"
+<link rel=""stylesheet"" href=""https://readu.assets/css/github.min.css"" media=""(prefers-color-scheme: light)"">
+<link rel=""stylesheet"" href=""https://readu.assets/css/github-dark.min.css"" media=""(prefers-color-scheme: dark)"">
+<script src=""https://readu.assets/js/highlight.min.js""></script>
 <script>hljs.highlightAll();</script>";
-        }
+    }
 
-        /// <summary>
-        /// Returns just the inner HTML body content (no doctype/head/scripts).
-        /// Used for incremental DOM updates in edit mode.
-        /// </summary>
-        public static string ParseMarkdownBody(string markdownContent, string filePath, bool enableMermaid = true)
-        {
-            string htmlBody = Markdown.ToHtml(markdownContent, s_renderPipeline);
-
-            if (enableMermaid)
-                htmlBody = AddMermaidHashes(htmlBody);
-
-            if (!string.IsNullOrEmpty(filePath) && filePath != "Welcome" && File.Exists(filePath))
-            {
-                string baseDir = Path.GetDirectoryName(filePath);
-                htmlBody = $"<base href='file:///{baseDir.Replace('\\', '/')}/'>{htmlBody}";
-            }
-
-            return htmlBody;
-        }
-
-        /// <summary>
-        /// Adds data-mermaid-hash attributes to mermaid code blocks so the
-        /// incremental updater can skip re-rendering unchanged diagrams.
-        /// </summary>
-        private static string AddMermaidHashes(string html)
-        {
-            // Match <pre><code class="language-mermaid">...content...</code></pre>
-            // or <pre class="mermaid">...content...</pre> (Markdig output)
-            return Regex.Replace(html,
-                @"(<(?:pre|code)\s+class=""(?:language-)?mermaid"")([^>]*>)([\s\S]*?)(</(?:pre|code)>)",
-                m =>
-                {
-                    string content = m.Groups[3].Value;
-                    string hash = ComputeShortHash(content);
-                    return $"{m.Groups[1].Value} data-mermaid-hash=\"{hash}\"{m.Groups[2].Value}{content}{m.Groups[4].Value}";
-                },
-                RegexOptions.IgnoreCase);
-        }
-
-        private static string ComputeShortHash(string input)
-        {
-            var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
-            // Use first 8 bytes as hex = 16 chars, plenty for deduplication
-            return Convert.ToHexString(bytes, 0, 8);
-        }
-
-        /// <summary>
-        /// Injects an incremental update function into the page.
-        /// Called from C# via ExecuteScriptAsync("updateContent('...')").
-        /// Uses lightweight DOM diffing to preserve Mermaid SVGs.
-        /// </summary>
-        private static string GetIncrementalUpdateScript()
-        {
-            return @"
+    private static string GetIncrementalUpdateScript()
+    {
+        return @"
 <script>
-// Incremental DOM update — avoids full page reload.
-// Preserves already-rendered Mermaid SVGs by hash comparison.
 async function updateContent(newBodyHtml) {
-    // Handle <base> tag: pull from body and place in <head>
     const baseMatch = newBodyHtml.match(/<base\s+href='([^']*)'[^>]*>/i);
     if (baseMatch) {
         let baseEl = document.getElementById('contentBase');
@@ -266,7 +239,7 @@ async function updateContent(newBodyHtml) {
         if (baseEl) baseEl.href = 'about:blank';
     }
 
-    // Collect existing Mermaid SVGs keyed by hash
+    // Cache existing Mermaid SVGs keyed by content hash
     const existingSvgs = new Map();
     document.querySelectorAll('[data-mermaid-hash]').forEach(el => {
         const hash = el.getAttribute('data-mermaid-hash');
@@ -274,15 +247,12 @@ async function updateContent(newBodyHtml) {
         if (hash && svg) existingSvgs.set(hash, svg.cloneNode(true));
     });
 
-    // Replace body contents
-    // Keep <base> if present in new content
     document.body.innerHTML = newBodyHtml;
 
-    // Restore cached Mermaid SVGs for unchanged diagrams
+    // Restore cached SVGs for unchanged diagrams
     document.querySelectorAll('[data-mermaid-hash]').forEach(el => {
         const hash = el.getAttribute('data-mermaid-hash');
         if (existingSvgs.has(hash)) {
-            // Replace the code block with the cached SVG
             const cachedSvg = existingSvgs.get(hash);
             el.innerHTML = '';
             el.appendChild(cachedSvg);
@@ -293,80 +263,81 @@ async function updateContent(newBodyHtml) {
     // Render only new/changed Mermaid blocks
     const unrendered = document.querySelectorAll('[data-mermaid-hash]:not([data-mermaid-rendered])');
     if (unrendered.length > 0 && window.mermaid) {
-        try {
-            await window.mermaid.run({ nodes: unrendered });
-        } catch(e) { console.warn('Mermaid render error:', e); }
+        try { await window.mermaid.run({ nodes: unrendered }); }
+        catch(e) { console.warn('Mermaid render error:', e); }
     }
 
-    // Render mermaid blocks without hash (plain class=""language-mermaid"" or class=""mermaid"")
     const plainMermaid = document.querySelectorAll('pre > code.language-mermaid:not([data-mermaid-rendered]), .mermaid:not([data-mermaid-rendered]):not(svg)');
     if (plainMermaid.length > 0 && window.mermaid) {
-        try {
-            await window.mermaid.run({ nodes: plainMermaid });
-        } catch(e) { console.warn('Mermaid plain render error:', e); }
+        try { await window.mermaid.run({ nodes: plainMermaid }); }
+        catch(e) { console.warn('Mermaid plain render error:', e); }
     }
 
-    // Re-run highlight.js on new code blocks
     if (typeof hljs !== 'undefined') {
         document.querySelectorAll('pre code:not(.hljs)').forEach(block => {
             hljs.highlightElement(block);
         });
     }
 
-    // Restore zoom if set
     if (document.body.dataset.zoom) {
         document.body.style.zoom = document.body.dataset.zoom;
     }
 }
 </script>";
-        }
-
-        public static List<Models.TocItem> ExtractTableOfContents(string markdownContent)
-        {
-            var tocItems = new List<Models.TocItem>();
-
-            var document = Markdown.Parse(markdownContent, s_tocPipeline);
-            var headings = document.Descendants<HeadingBlock>();
-
-            foreach (var heading in headings)
-            {
-                // Extract full text from all inline content (handles bold, italic, code, etc.)
-                var titleText = ExtractHeadingText(heading);
-                var id = heading.GetAttributes()?.Id ?? GenerateId(titleText);
-
-                tocItems.Add(new Models.TocItem
-                {
-                    Title = titleText,
-                    Level = heading.Level,
-                    Id = id,
-                });
-            }
-
-            return tocItems;
-        }
-
-        private static string ExtractHeadingText(HeadingBlock heading)
-        {
-            if (heading.Inline == null) return string.Empty;
-
-            var sb = new StringBuilder();
-            foreach (var inline in heading.Inline)
-            {
-                if (inline is LiteralInline literal)
-                    sb.Append(literal.Content);
-                else if (inline is CodeInline code)
-                    sb.Append(code.Content);
-                else
-                    sb.Append(inline.ToString());
-            }
-            return sb.Length > 0 ? sb.ToString() : heading.Inline?.FirstChild?.ToString() ?? string.Empty;
-        }
-
-        private static string GenerateId(string text)
-        {
-            return text.ToLower(CultureInfo.InvariantCulture)
-                       .Replace(" ", "-", StringComparison.Ordinal)
-                       .Replace("'", string.Empty, StringComparison.Ordinal);
-        }
     }
+
+    #endregion
+
+    #region Mermaid Hashing
+
+    /// <summary>
+    /// Injects <c>data-mermaid-hash</c> attributes so the incremental updater
+    /// can skip re-rendering unchanged diagrams.
+    /// </summary>
+    private static string AddMermaidHashes(string html)
+    {
+        return Regex.Replace(html,
+            @"(<(?:pre|code)\s+class=""(?:language-)?mermaid"")([^>]*>)([\s\S]*?)(</(?:pre|code)>)",
+            m =>
+            {
+                var content = m.Groups[3].Value;
+                var hash = ComputeShortHash(content);
+                return $"{m.Groups[1].Value} data-mermaid-hash=\"{hash}\"{m.Groups[2].Value}{content}{m.Groups[4].Value}";
+            },
+            RegexOptions.IgnoreCase);
+    }
+
+    private static string ComputeShortHash(string input)
+    {
+        var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(input));
+        return Convert.ToHexString(bytes, 0, 8);
+    }
+
+    #endregion
+
+    #region Heading Extraction
+
+    private static string ExtractHeadingText(HeadingBlock heading)
+    {
+        if (heading.Inline is null) return string.Empty;
+
+        var sb = new StringBuilder();
+        foreach (var inline in heading.Inline)
+        {
+            _ = inline switch
+            {
+                LiteralInline literal => sb.Append(literal.Content),
+                CodeInline code => sb.Append(code.Content),
+                _ => sb.Append(inline)
+            };
+        }
+        return sb.Length > 0 ? sb.ToString() : heading.Inline?.FirstChild?.ToString() ?? string.Empty;
+    }
+
+    private static string GenerateId(string text) =>
+        text.ToLower(CultureInfo.InvariantCulture)
+            .Replace(" ", "-", StringComparison.Ordinal)
+            .Replace("'", string.Empty, StringComparison.Ordinal);
+
+    #endregion
 }

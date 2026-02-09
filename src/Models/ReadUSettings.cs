@@ -1,13 +1,11 @@
-// READU.md - A lightweight Markdown reader
-// Licensed under the MIT License.
+// READU.md — Licensed under the MIT License.
 
 using System.Text.Json.Serialization;
 
-namespace ReadU.Models
+namespace ReadU.Models;
+
+public class ReadUSettings
 {
-    public class ReadUSettings
-    {
-        [JsonPropertyName("properties")]
-        public ModuleProperties Properties { get; set; }
-    }
+    [JsonPropertyName("properties")]
+    public ModuleProperties Properties { get; set; }
 }
