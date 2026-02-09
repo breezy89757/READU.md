@@ -5,6 +5,13 @@ A fast, lightweight Markdown reader & editor for Windows, built with **Fluent De
 ![.NET 9](https://img.shields.io/badge/.NET-9.0-purple)
 ![WinUI 3](https://img.shields.io/badge/WinUI-3-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
+[![GitHub Release](https://img.shields.io/github/v/release/breezy89757/READU.md)](https://github.com/breezy89757/READU.md/releases/latest)
+
+<p align="center">
+  <img src="docs/demo.gif" alt="READU.md Demo" width="800">
+</p>
+
+> **[⬇️ Download Latest Release](https://github.com/breezy89757/READU.md/releases/latest)** — Extract & run, no installation needed.
 
 ## Screenshots
 
