@@ -20,7 +20,7 @@ $ErrorActionPreference = "Stop"
 # ── Extract version from csproj ──────────────────────────────────────────────
 $csproj = Join-Path $PSScriptRoot "src\READU.md.csproj"
 [xml]$proj = Get-Content $csproj
-$version = $proj.Project.PropertyGroup[0].Version
+$version = ($proj.Project.PropertyGroup | ForEach-Object { $_.Version } | Where-Object { $_ }) | Select-Object -First 1
 if (-not $version) { $version = "0.0.0" }
 Write-Host "Building READU.md v$version ($Platform) ..." -ForegroundColor Cyan
 
