@@ -63,7 +63,6 @@ namespace ReadU.Helpers
 
             if (baseDir != null)
             {
-                // Set base href so relative image/link paths resolve correctly
                 sb.Append($"<base href='file:///{baseDir.Replace('\\', '/')}/'>");
             }
 
@@ -204,7 +203,6 @@ mermaid.initialize({ startOnLoad: false, theme: window.matchMedia('(prefers-colo
             if (enableMermaid)
                 htmlBody = AddMermaidHashes(htmlBody);
 
-            // Add base href for relative paths
             if (!string.IsNullOrEmpty(filePath) && filePath != "Welcome" && File.Exists(filePath))
             {
                 string baseDir = Path.GetDirectoryName(filePath);
@@ -252,7 +250,7 @@ mermaid.initialize({ startOnLoad: false, theme: window.matchMedia('(prefers-colo
 // Incremental DOM update — avoids full page reload.
 // Preserves already-rendered Mermaid SVGs by hash comparison.
 async function updateContent(newBodyHtml) {
-    // Handle <base> tag: extract from body content and place in <head>
+    // Handle <base> tag: pull from body and place in <head>
     const baseMatch = newBodyHtml.match(/<base\s+href='([^']*)'[^>]*>/i);
     if (baseMatch) {
         let baseEl = document.getElementById('contentBase');

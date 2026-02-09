@@ -64,12 +64,30 @@ A fast, lightweight Markdown reader & editor for Windows, built with **Fluent De
 |---|---|
 | **Framework** | .NET 9 |
 | **UI** | WinUI 3 (Windows App SDK 1.6) |
-| **Markdown** | Markdig |
+| **Markdown** | [Markdig](https://github.com/xoofx/markdig) |
 | **Rendering** | WebView2 (Chromium) |
-| **Syntax Highlighting** | highlight.js |
-| **Diagrams** | Mermaid.js v11 |
+| **Syntax Highlighting** | highlight.js (CDN) |
+| **Diagrams** | Mermaid.js v11 (CDN) |
 | **Window Management** | WinUIEx |
-| **Packaging** | MSIX (self-contained) |
+
+## Architecture & Trade-offs
+
+READU.md is a **WinUI 3 desktop shell** that brings together several open-source libraries. Here's how the pieces fit and what trade-offs were made:
+
+**Markdown parsing** is handled entirely by [Markdig](https://github.com/xoofx/markdig) — a fast, extensible .NET Markdown processor. READU.md doesn't reimplement parsing; Markdig does the heavy lifting and does it well.
+
+**Rendering** uses a WebView2 (Chromium) control. This was a deliberate trade-off: a native text renderer would use less memory, but wouldn't support Mermaid diagrams, LaTeX math, or the full CSS styling that makes Markdown readable. WebView2 is pre-installed on Windows 10/11, so there's no extra download.
+
+**Shell page architecture** — CDN resources (highlight.js, mermaid.js, CSS) are loaded into the WebView2 once at startup. When switching tabs or updating content, only the HTML body is injected via JavaScript (`updateContent()`), avoiding full page reloads. This is what makes tab-switching and edit-mode preview fast.
+
+**Mermaid diagram caching** — each Mermaid code block is hashed (SHA256). During live preview updates, unchanged diagrams keep their rendered SVGs instead of being re-rendered — this prevents the "flash" you'd normally see.
+
+**What this project adds** on top of these libraries:
+- Native WinUI 3 app with system theme integration (Mica, dark/light mode)
+- Multi-tab document management with per-tab state (scroll, zoom, edit mode)
+- File watching with debounced hot-reload
+- Full-page screenshot via CDP (`Page.captureScreenshot`)
+- File association and drag-and-drop integration
 
 ## Build
 

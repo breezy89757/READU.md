@@ -1,6 +1,3 @@
-// READU.md - A lightweight Markdown reader
-// Licensed under the MIT License.
-
 using System;
 using System.IO;
 using System.Text.Json;
@@ -11,11 +8,24 @@ using ReadU.Models;
 
 namespace ReadU.Helpers
 {
-    public class SettingsWatcher : IDisposable
+    public sealed class SettingsWatcher : IDisposable
     {
+        private const int RetryCount = 3;
+        private const int RetryDelayMs = 50;
+
         private readonly string _settingsFilePath;
         private readonly FileSystemWatcher _watcher;
         private CancellationTokenSource _debounceCts;
+
+        private static readonly ReadUSettings s_defaults = new()
+        {
+            Properties = new ModuleProperties
+            {
+                EnableMermaid = new BoolProperty { Value = true },
+                FontSize = new IntProperty { Value = 14 }
+            }
+        };
+
         private static readonly JsonSerializerOptions s_jsonOptions = new()
         {
             WriteIndented = true,
@@ -29,24 +39,17 @@ namespace ReadU.Helpers
             var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
             _settingsFilePath = Path.Combine(localAppData, "READU.md", "settings.json");
 
-            var directory = Path.GetDirectoryName(_settingsFilePath);
-            if (!Directory.Exists(directory))
-            {
-                Directory.CreateDirectory(directory);
-            }
+            var directory = Path.GetDirectoryName(_settingsFilePath)!;
+            Directory.CreateDirectory(directory);
 
-            // Create default settings if none exist
             if (!File.Exists(_settingsFilePath))
-            {
-                CreateDefaultSettings();
-            }
+                WriteDefaults();
 
             _watcher = new FileSystemWatcher(directory, "settings.json")
             {
                 NotifyFilter = NotifyFilters.LastWrite,
                 EnableRaisingEvents = true,
             };
-
             _watcher.Changed += OnFileChanged;
         }
 
@@ -55,33 +58,47 @@ namespace ReadU.Helpers
             _watcher?.Dispose();
             _debounceCts?.Cancel();
             _debounceCts?.Dispose();
-            GC.SuppressFinalize(this);
         }
 
-        private void CreateDefaultSettings()
+        /// <summary>
+        /// Reads settings asynchronously with retry logic for file-lock contention.
+        /// Falls back to defaults if the file is missing or corrupt.
+        /// </summary>
+        public async Task<ReadUSettings> ReadSettingsAsync()
         {
-            try
+            if (!File.Exists(_settingsFilePath))
+                return Clone(s_defaults);
+
+            for (int attempt = 0; attempt < RetryCount; attempt++)
             {
-                var defaults = new ReadUSettings
+                try
                 {
-                    Properties = new ModuleProperties
+                    string json = await File.ReadAllTextAsync(_settingsFilePath).ConfigureAwait(false);
+                    var settings = JsonSerializer.Deserialize<ReadUSettings>(json, s_jsonOptions);
+                    if (settings?.Properties != null)
                     {
-                        EnableMermaid = new BoolProperty { Value = true },
-                        FontSize = new IntProperty { Value = 14 }
+                        SettingsChanged?.Invoke(this, settings);
+                        return settings;
                     }
-                };
-                string json = JsonSerializer.Serialize(defaults, s_jsonOptions);
-                File.WriteAllText(_settingsFilePath, json);
+                }
+                catch (IOException) when (attempt < RetryCount - 1)
+                {
+                    await Task.Delay(RetryDelayMs).ConfigureAwait(false);
+                }
+                catch (JsonException ex)
+                {
+                    Logger.LogError("Settings file is corrupt, resetting to defaults", ex);
+                    WriteDefaults();
+                    return Clone(s_defaults);
+                }
             }
-            catch (Exception ex)
-            {
-                Logger.LogError("Failed to create default settings", ex);
-            }
+
+            Logger.LogWarning("Could not read settings after retries, using defaults");
+            return Clone(s_defaults);
         }
 
         private void OnFileChanged(object sender, FileSystemEventArgs e)
         {
-            // Debounce: cancel previous pending read
             _debounceCts?.Cancel();
             _debounceCts?.Dispose();
             _debounceCts = new CancellationTokenSource();
@@ -91,47 +108,34 @@ namespace ReadU.Helpers
             {
                 try
                 {
-                    await Task.Delay(150, token);
+                    await Task.Delay(150, token).ConfigureAwait(false);
                     if (token.IsCancellationRequested) return;
-                    ReadSettings();
+                    await ReadSettingsAsync().ConfigureAwait(false);
                 }
-                catch (TaskCanceledException) { }
+                catch (OperationCanceledException) { }
             }, token);
         }
 
-        public ReadUSettings ReadSettings()
+        private void WriteDefaults()
         {
             try
             {
-                if (!File.Exists(_settingsFilePath))
-                    return null;
-
-                // Retry with async-friendly delay
-                for (int i = 0; i < 3; i++)
-                {
-                    try
-                    {
-                        string json = File.ReadAllText(_settingsFilePath);
-                        var settings = JsonSerializer.Deserialize<ReadUSettings>(json, s_jsonOptions);
-                        if (settings != null)
-                        {
-                            SettingsChanged?.Invoke(this, settings);
-                            return settings;
-                        }
-                        break;
-                    }
-                    catch (IOException)
-                    {
-                        Thread.Sleep(50);
-                    }
-                }
+                string json = JsonSerializer.Serialize(s_defaults, s_jsonOptions);
+                File.WriteAllText(_settingsFilePath, json);
             }
             catch (Exception ex)
             {
-                Logger.LogError("Failed to read settings", ex);
+                Logger.LogError("Failed to write default settings", ex);
             }
-
-            return null;
         }
+
+        private static ReadUSettings Clone(ReadUSettings src) => new()
+        {
+            Properties = new ModuleProperties
+            {
+                EnableMermaid = new BoolProperty { Value = src.Properties.EnableMermaid.Value },
+                FontSize = new IntProperty { Value = src.Properties.FontSize.Value }
+            }
+        };
     }
 }

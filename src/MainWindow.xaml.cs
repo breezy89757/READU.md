@@ -34,25 +34,31 @@ namespace ReadU
         private SettingsWatcher _settingsWatcher;
         private ReadUSettings _currentSettings;
 
-        // WebView2 readiness
         private bool _webViewReady;
         private bool _previewWebViewReady;
-
-        // Shell page loaded (CDN resources cached)
         private bool _shellLoaded;
         private bool _previewShellLoaded;
 
-        // Edit-mode debounce
         private CancellationTokenSource _editDebounceCts;
         private const int EditDebounceMs = 500;
-
-        // Zoom constants
         private const int ZoomStep = 10;
         private const int ZoomMin = 50;
         private const int ZoomMax = 200;
-
-        // Suppress tab-switch handler during programmatic changes
         private bool _suppressTabSwitch;
+
+        #endregion
+
+        #region Helpers
+
+        /// <summary>Escapes HTML for injection into a JavaScript single-quoted string literal.</summary>
+        private static string EscapeForJs(string html)
+        {
+            return html
+                .Replace("\\", "\\\\")
+                .Replace("'", "\\'")
+                .Replace("\n", "\\n")
+                .Replace("\r", "\\r");
+        }
 
         #endregion
 
@@ -92,13 +98,12 @@ namespace ReadU
 
         private async void InitializeAsync(string filePath)
         {
-            // 1. Start WebView2 init
             var webViewInit = MarkdownWebView.EnsureCoreWebView2Async();
 
-            // 2. Settings
+            // Load settings before WebView completes
             _settingsWatcher = new SettingsWatcher();
             _settingsWatcher.SettingsChanged += OnSettingsChanged;
-            _currentSettings = _settingsWatcher.ReadSettings();
+            _currentSettings = await _settingsWatcher.ReadSettingsAsync();
 
             try
             {
@@ -106,10 +111,8 @@ namespace ReadU
                 ConfigureWebView(MarkdownWebView);
                 _webViewReady = true;
 
-                // 3. Pre-load shell HTML with CDN resources (highlight.js + mermaid.js)
                 await LoadShellAsync(MarkdownWebView);
 
-                // 4. Open initial tab
                 if (!string.IsNullOrEmpty(filePath) && File.Exists(filePath))
                 {
                     await OpenFileInNewTabAsync(filePath);
@@ -237,7 +240,6 @@ namespace ReadU
         {
             if (_activeTab == tab && _webViewReady) return;
 
-            // Save outgoing tab state
             SaveActiveTabState();
 
             _activeTab = tab;
@@ -272,12 +274,10 @@ namespace ReadU
 
         private void RestoreTabUI(TabDocument tab)
         {
-            // Title
             this.Title = tab.IsWelcome
                 ? "READU.md - Welcome"
                 : $"{tab.FileName} - READU.md";
 
-            // TOC
             TocItems.Clear();
             if (tab.Toc != null)
             {
@@ -285,15 +285,11 @@ namespace ReadU
                     TocItems.Add(item);
             }
 
-            // Zoom
             ZoomLevelText.Text = $"{tab.ZoomPercent}%";
-
-            // Edit mode UI
             UpdateEditModeUI(tab.IsEditMode);
 
             if (!_webViewReady) return;
 
-            // Content
             if (tab.IsEditMode)
             {
                 EditorTextBox.TextChanged -= EditorTextBox_TextChanged;
@@ -337,12 +333,7 @@ namespace ReadU
                 await LoadShellAsync(wv);
             }
 
-            // Inject body content via updateContent() — no full page reload
-            string escaped = bodyHtml
-                .Replace("\\", "\\\\")
-                .Replace("'", "\\'")
-                .Replace("\n", "\\n")
-                .Replace("\r", "\\r");
+            string escaped = EscapeForJs(bodyHtml);
 
             try
             {
@@ -488,7 +479,6 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
                 _currentSettings = newSettings;
                 var newFontSize = _currentSettings?.Properties?.FontSize?.Value ?? 14;
 
-                // Update font size in shell CSS if changed
                 if (oldFontSize != newFontSize)
                 {
                     string js = $"document.body.style.fontSize='{newFontSize}px';";
@@ -770,21 +760,14 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
 
                         RenderTabContent(_activeTab);
 
-                        // Update TOC
                         TocItems.Clear();
                         if (_activeTab.Toc != null)
                             foreach (var item in _activeTab.Toc)
                                 TocItems.Add(item);
 
-                        // Incremental preview update (DOM diff, preserves Mermaid SVGs)
-                        // tab.RenderedHtml is now body-only, reuse directly
                         if (PreviewWebView?.CoreWebView2 != null && _activeTab.RenderedHtml != null)
                         {
-                            string escaped = _activeTab.RenderedHtml
-                                .Replace("\\", "\\\\")
-                                .Replace("'", "\\'")
-                                .Replace("\n", "\\n")
-                                .Replace("\r", "\\r");
+                            string escaped = EscapeForJs(_activeTab.RenderedHtml);
                             await PreviewWebView.CoreWebView2.ExecuteScriptAsync(
                                 $"if(typeof updateContent==='function')updateContent('{escaped}');");
                         }
@@ -828,7 +811,6 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
                 if (_activeTab.Watcher != null)
                     _activeTab.Watcher.EnableRaisingEvents = true;
 
-                // Update title
                 this.Title = $"{_activeTab.FileName} - READU.md";
             }
             catch (Exception ex)
@@ -1034,7 +1016,7 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
 
             try
             {
-                // Get full page dimensions — return raw object, ExecuteScriptAsync serializes to JSON
+                // ExecuteScriptAsync returns the result serialized as JSON
                 var dimsJson = await wv.CoreWebView2.ExecuteScriptAsync(
                     "({w: document.documentElement.scrollWidth, h: document.documentElement.scrollHeight, dpr: window.devicePixelRatio})");
                 var dims = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(dimsJson);
@@ -1057,7 +1039,6 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
                 string base64 = resultJson.GetProperty("data").GetString();
                 byte[] imageBytes = Convert.FromBase64String(base64);
 
-                // Save dialog
                 var picker = new FileSavePicker();
                 picker.SuggestedStartLocation = PickerLocationId.PicturesLibrary;
                 picker.FileTypeChoices.Add("PNG Image", new List<string> { ".png" });

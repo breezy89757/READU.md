@@ -10,14 +10,13 @@ build*.log
 xaml_err.log
 xaml_out.log
 
-# Antigravity / AI brain work files
+# Working / scratch files
 23a1afd1-*/
 *.metadata.json
 *.resolved
 *.resolved.*
 
-# Planning docs (not for release)
-PHASE2_PLAN.md
+# Project-specific excludes
 Rebranding SwiftMD Project.md
 
 # MSIX packaging
