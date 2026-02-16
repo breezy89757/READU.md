@@ -18,6 +18,7 @@ xaml_out.log
 
 # Project-specific excludes
 Rebranding SwiftMD Project.md
+src/Package.StoreAssociation.xml
 
 # MSIX packaging
 *.appx

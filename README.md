@@ -13,6 +13,8 @@ A fast, lightweight Markdown reader & editor for Windows, built with **Fluent De
 
 > **[⬇️ Download Latest Release](https://github.com/breezy89757/READU.md/releases/latest)** — Extract & run, no installation needed.
 
+> **[🛍️ Get it on Microsoft Store](https://apps.microsoft.com/store/detail/9MWGGZBBP1C1?cid=DevShareMCLPCS)**
+
 ## Screenshots
 
 | Features & TOC | Mermaid Diagrams |
