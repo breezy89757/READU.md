@@ -67,6 +67,18 @@
                         Background="Transparent" BorderThickness="0" Padding="6" Width="32" Height="32">
                     <FontIcon Glyph="&#xE722;" FontSize="14" />
                 </Button>
+                <AppBarSeparator Margin="2,4" />
+                <Button x:Name="AiSettingsButton" Click="AiSettingsButton_Click" ToolTipService.ToolTip="AI Settings"
+                        Background="Transparent" BorderThickness="0" Padding="6" Width="32" Height="32">
+                    <FontIcon Glyph="&#xE713;" FontSize="14" />
+                </Button>
+                <Button x:Name="SummarizeButton" Click="SummarizeButton_Click" ToolTipService.ToolTip="AI Summary"
+                        Background="Transparent" BorderThickness="0" Padding="8,6" Height="32" Visibility="Collapsed">
+                    <StackPanel Orientation="Horizontal" Spacing="6">
+                        <SymbolIcon Symbol="Message" />
+                        <TextBlock Text="AI" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Button>
             </StackPanel>
         </Grid>
 
@@ -121,11 +133,88 @@
 
             <!-- Content Panel (Read or Edit mode) -->
             <Grid x:Name="ContentPanel" Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <Border x:Name="SummaryPanel"
+                        Grid.Row="0"
+                        Margin="12,12,12,0"
+                        Padding="16"
+                        CornerRadius="8"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        Visibility="Collapsed">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock x:Name="SummaryHeaderTextBlock"
+                                       Text="AI Summary"
+                                       FontWeight="SemiBold"
+                                       Style="{StaticResource BodyStrongTextBlockStyle}" />
+
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                                <ProgressRing x:Name="SummaryProgressRing"
+                                              Width="18"
+                                              Height="18"
+                                              Visibility="Collapsed"
+                                              IsActive="False" />
+                                <Button x:Name="SummaryCopyButton"
+                                    Click="SummaryCopyButton_Click"
+                                    Content="Copy"
+                                    IsEnabled="False" />
+                                <Button x:Name="SummaryCloseButton"
+                                        Click="SummaryCloseButton_Click"
+                                        Content="Close" />
+                            </StackPanel>
+                        </Grid>
+
+                        <TextBlock x:Name="SummaryStatusTextBlock"
+                                   Grid.Row="1"
+                                   Margin="0,12,0,0"
+                                   Visibility="Collapsed"
+                                   TextWrapping="WrapWholeWords" />
+
+                        <ScrollViewer Grid.Row="2"
+                                      Margin="0,12,0,0"
+                                      MaxHeight="240"
+                                      VerticalScrollBarVisibility="Auto">
+                            <ItemsControl x:Name="SummaryItemsControl" ItemsSource="{x:Bind SummaryItems, Mode=OneWay}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+
+                                            <TextBlock Text="•" Margin="0,0,8,0" VerticalAlignment="Top" />
+                                            <TextBlock Grid.Column="1" Text="{Binding}" TextWrapping="WrapWholeWords" />
+                                        </Grid>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </Grid>
+                </Border>
+
                 <!-- Read Mode: WebView2 only -->
-                <controls:WebView2 x:Name="MarkdownWebView" />
+                <controls:WebView2 x:Name="MarkdownWebView" Grid.Row="1" />
 
                 <!-- Edit Mode: split pane (hidden by default) -->
-                <Grid x:Name="EditModePanel" Visibility="Collapsed">
+                <Grid x:Name="EditModePanel" Grid.Row="1" Visibility="Collapsed">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="*" />
                         <ColumnDefinition Width="Auto" />

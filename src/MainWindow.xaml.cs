@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using ReadU.Helpers;
@@ -26,8 +27,10 @@ public sealed partial class MainWindow : WindowEx, IDisposable
     #region Fields
 
     public ObservableCollection<TocItem> TocItems { get; } = new();
+    public ObservableCollection<string> SummaryItems { get; } = new();
 
     private readonly List<TabDocument> _tabs = new();
+    private readonly StringBuilder _summaryBuilder = new();
     private TabDocument _activeTab;
 
     private SettingsWatcher _settingsWatcher;
@@ -39,6 +42,7 @@ public sealed partial class MainWindow : WindowEx, IDisposable
     private bool _previewShellLoaded;
 
     private CancellationTokenSource _editDebounceCts;
+    private CancellationTokenSource _summaryCts;
     private const int EditDebounceMs = 500;
     private const int ZoomStep = 10;
     private const int ZoomMin = 50;
@@ -59,6 +63,234 @@ public sealed partial class MainWindow : WindowEx, IDisposable
             .Replace("\r", "\\r");
     }
 
+    private void ApplyLocalizedText()
+    {
+        var uiText = AiUiTextService.Current;
+        ToolTipService.SetToolTip(AiSettingsButton, uiText.AiSettingsTooltip);
+        ToolTipService.SetToolTip(SummarizeButton, uiText.SummarizeTooltip);
+        SummaryHeaderTextBlock.Text = uiText.SummaryTitle;
+        SummaryCopyButton.Content = uiText.SummaryCopyButtonText;
+        SummaryCloseButton.Content = uiText.CancelButtonText;
+    }
+
+    private static string GetWelcomeMarkdown()
+    {
+        return @"
+# Welcome to READU.md
+
+A fast, lightweight Markdown reader & editor built with **Fluent Design**.
+
+## Features
+* **Multi-Tab** — open multiple files simultaneously (like Notepad++)
+* **Edit Mode** — side-by-side Markdown editor + live preview (`Ctrl+E`)
+* **Table of Contents** — auto-generated sidebar navigation
+* **Syntax Highlighting** — powered by highlight.js
+* **Mermaid.js** — flowcharts, sequence diagrams, and more
+* **Dark Mode** — follows your system theme automatically
+* **Drag & Drop** — drop any `.md` file to open it
+* **Hot Reload** — automatically refreshes when the file changes
+* **PDF Export** — press `Ctrl+P` to print/export as PDF
+* **Full Page Screenshot** — capture the entire rendered page as PNG
+
+## How to use
+1. Drag a Markdown file onto this window
+2. Or press `Ctrl+O` to open a file
+3. Press `Ctrl+E` to switch to Edit mode
+
+## Keyboard Shortcuts
+| Shortcut | Action |
+|---|---|
+| `Ctrl+O` | Open file (new tab) |
+| `Ctrl+W` | Close current tab |
+| `Ctrl+Tab` | Next tab |
+| `Ctrl+Shift+Tab` | Previous tab |
+| `Ctrl+E` | Toggle Edit / Read mode |
+| `Ctrl+S` | Save file (edit mode) |
+| `Ctrl+N` | New blank tab (edit mode) |
+| `Ctrl+P` | Print / Export PDF |
+| `Ctrl+Shift+S` | Full page screenshot |
+| `Ctrl++` / `Ctrl+-` | Zoom in / out |
+| `Ctrl+0` | Reset zoom to 100% |
+| `Ctrl+Home` | Open Welcome page |
+
+---
+*READU.md v2.2.0*
+";
+    }
+
+    private void SetSummaryStatus(string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+        {
+            SummaryStatusTextBlock.Text = string.Empty;
+            SummaryStatusTextBlock.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        SummaryStatusTextBlock.Text = message;
+        SummaryStatusTextBlock.Visibility = Visibility.Visible;
+    }
+
+    private static string NormalizeSummaryLine(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+            return string.Empty;
+
+        var trimmed = line.Trim();
+
+        while (trimmed.Length > 0 && "-*•·▪●".Contains(trimmed[0]))
+            trimmed = trimmed[1..].TrimStart();
+
+        int index = 0;
+        while (index < trimmed.Length && char.IsDigit(trimmed[index]))
+            index++;
+
+        if (index > 0 && index < trimmed.Length && (trimmed[index] == '.' || trimmed[index] == ')'))
+            trimmed = trimmed[(index + 1)..].TrimStart();
+
+        return trimmed;
+    }
+
+    private void ResetSummaryItems(string summaryText)
+    {
+        SummaryItems.Clear();
+
+        if (string.IsNullOrWhiteSpace(summaryText))
+            return;
+
+        foreach (var line in summaryText
+                     .Replace("\r", string.Empty)
+                     .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                     .Select(NormalizeSummaryLine)
+                     .Where(line => !string.IsNullOrWhiteSpace(line)))
+        {
+            SummaryItems.Add(line);
+        }
+
+        UpdateSummaryCopyState();
+    }
+
+    private void UpdateSummaryCopyState()
+    {
+        SummaryCopyButton.IsEnabled = SummaryItems.Count > 0 && _summaryCts is null;
+    }
+
+    private void UpdateAiFeatureStateCore()
+    {
+        bool canSummarize = _activeTab is not null
+            && !string.IsNullOrWhiteSpace(_activeTab.Content)
+            && AiSummaryService.CanSummarize(AiConfig.FromSettings(_currentSettings));
+
+        SummarizeButton.Visibility = canSummarize ? Visibility.Visible : Visibility.Collapsed;
+        SummarizeButton.IsEnabled = canSummarize && _summaryCts is null;
+    }
+
+    private void CloseSummaryPanel()
+    {
+        var summaryCts = _summaryCts;
+        _summaryCts = null;
+        summaryCts?.Cancel();
+        summaryCts?.Dispose();
+        _summaryBuilder.Clear();
+        SummaryItems.Clear();
+        SetSummaryStatus(string.Empty);
+        SummaryProgressRing.IsActive = false;
+        SummaryProgressRing.Visibility = Visibility.Collapsed;
+        SummaryPanel.Visibility = Visibility.Collapsed;
+        UpdateSummaryCopyState();
+        UpdateAiFeatureStateCore();
+    }
+
+    private static string BuildSummaryClipboardText(IEnumerable<string> summaryItems)
+        => string.Join(Environment.NewLine, summaryItems.Select(item => $"- {item}"));
+
+    private async Task SummarizeActiveTabAsync()
+    {
+        var uiText = AiUiTextService.Current;
+        var config = AiConfig.FromSettings(_currentSettings);
+
+        if (!AiSummaryService.CanSummarize(config))
+        {
+            SummaryPanel.Visibility = Visibility.Visible;
+            ResetSummaryItems(string.Empty);
+            SetSummaryStatus(uiText.SummaryUnavailable);
+            return;
+        }
+
+        string documentContent = _activeTab?.Content ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(documentContent) && _activeTab?.FilePath is not null && File.Exists(_activeTab.FilePath))
+        {
+            documentContent = await File.ReadAllTextAsync(_activeTab.FilePath);
+            _activeTab.Content = documentContent;
+        }
+
+        if (string.IsNullOrWhiteSpace(documentContent))
+        {
+            SummaryPanel.Visibility = Visibility.Visible;
+            ResetSummaryItems(string.Empty);
+            SetSummaryStatus(uiText.SummaryEmptyDocument);
+            return;
+        }
+
+        _summaryCts?.Cancel();
+        _summaryCts?.Dispose();
+        _summaryCts = new CancellationTokenSource();
+        var summaryTokenSource = _summaryCts;
+
+        _summaryBuilder.Clear();
+        ResetSummaryItems(string.Empty);
+        SummaryPanel.Visibility = Visibility.Visible;
+        SetSummaryStatus(uiText.SummaryRunning);
+        SummaryProgressRing.Visibility = Visibility.Visible;
+        SummaryProgressRing.IsActive = true;
+        SummarizeButton.IsEnabled = false;
+        UpdateSummaryCopyState();
+
+        try
+        {
+            var summary = await AiSummaryService.SummarizeAsync(
+                config,
+                documentContent,
+                delta => DispatcherQueue.TryEnqueue(() =>
+                {
+                    if (_summaryCts != summaryTokenSource)
+                        return;
+
+                    _summaryBuilder.Append(delta);
+                    ResetSummaryItems(_summaryBuilder.ToString());
+                }),
+                summaryTokenSource.Token);
+
+            if (_summaryCts != summaryTokenSource)
+                return;
+
+            ResetSummaryItems(summary);
+            SetSummaryStatus(string.Empty);
+        }
+        catch (OperationCanceledException) when (summaryTokenSource.IsCancellationRequested)
+        {
+        }
+        catch (Exception ex)
+        {
+            if (_summaryCts != summaryTokenSource)
+                return;
+
+            ResetSummaryItems(string.Empty);
+            SetSummaryStatus(AiUiTextService.FormatSummaryError(ex));
+        }
+        finally
+        {
+            if (_summaryCts == summaryTokenSource)
+                _summaryCts = null;
+
+            summaryTokenSource.Dispose();
+            SummaryProgressRing.IsActive = false;
+            SummaryProgressRing.Visibility = Visibility.Collapsed;
+            UpdateSummaryCopyState();
+            UpdateAiFeatureStateCore();
+        }
+    }
+
     #endregion
 
     #region Construction / Dispose
@@ -68,6 +300,7 @@ public sealed partial class MainWindow : WindowEx, IDisposable
     public MainWindow(string filePath)
     {
         this.InitializeComponent();
+        ApplyLocalizedText();
 
         ExtendsContentIntoTitleBar = true;
         SetTitleBar(TitleBar);
@@ -88,6 +321,8 @@ public sealed partial class MainWindow : WindowEx, IDisposable
         _settingsWatcher?.Dispose();
         _editDebounceCts?.Cancel();
         _editDebounceCts?.Dispose();
+        _summaryCts?.Cancel();
+        _summaryCts?.Dispose();
         foreach (var tab in _tabs) tab.Dispose();
     }
 
@@ -188,8 +423,8 @@ public sealed partial class MainWindow : WindowEx, IDisposable
         }
 
         var tab = new TabDocument();
-        var (html, toc) = RenderWelcomePage();
-        tab.Content = null;
+        var (markdown, html, toc) = RenderWelcomePage();
+        tab.Content = markdown;
         tab.RenderedHtml = html;
         tab.Toc = toc;
 
@@ -246,6 +481,8 @@ public sealed partial class MainWindow : WindowEx, IDisposable
         if (_activeTab == tab && _webViewReady) return;
 
         SaveActiveTabState();
+        if (_activeTab != tab)
+            CloseSummaryPanel();
 
         _activeTab = tab;
 
@@ -292,6 +529,7 @@ public sealed partial class MainWindow : WindowEx, IDisposable
 
         ZoomLevelText.Text = $"{tab.ZoomPercent}%";
         UpdateEditModeUI(tab.IsEditMode);
+        UpdateAiFeatureStateCore();
 
         if (!_webViewReady) return;
 
@@ -394,7 +632,8 @@ public sealed partial class MainWindow : WindowEx, IDisposable
     {
         if (tab.FilePath is null || !File.Exists(tab.FilePath))
         {
-            var (html, toc) = RenderWelcomePage();
+            var (markdown, html, toc) = RenderWelcomePage();
+            tab.Content = markdown;
             tab.RenderedHtml = html;
             tab.Toc = toc;
             return;
@@ -423,53 +662,13 @@ public sealed partial class MainWindow : WindowEx, IDisposable
             tab.Content, tab.FilePath ?? "Welcome", mermaid);
     }
 
-    private (string Html, List<TocItem> Toc) RenderWelcomePage()
+    private (string Markdown, string Html, List<TocItem> Toc) RenderWelcomePage()
     {
-        string md = @"
-# Welcome to READU.md
-
-A fast, lightweight Markdown reader & editor built with **Fluent Design**.
-
-## Features
-* **Multi-Tab** — open multiple files simultaneously (like Notepad++)
-* **Edit Mode** — side-by-side Markdown editor + live preview (`Ctrl+E`)
-* **Table of Contents** — auto-generated sidebar navigation
-* **Syntax Highlighting** — powered by highlight.js
-* **Mermaid.js** — flowcharts, sequence diagrams, and more
-* **Dark Mode** — follows your system theme automatically
-* **Drag & Drop** — drop any `.md` file to open it
-* **Hot Reload** — automatically refreshes when the file changes
-* **PDF Export** — press `Ctrl+P` to print/export as PDF
-* **Full Page Screenshot** — capture the entire rendered page as PNG
-
-## How to use
-1. Drag a Markdown file onto this window
-2. Or press `Ctrl+O` to open a file
-3. Press `Ctrl+E` to switch to Edit mode
-
-## Keyboard Shortcuts
-| Shortcut | Action |
-|---|---|
-| `Ctrl+O` | Open file (new tab) |
-| `Ctrl+W` | Close current tab |
-| `Ctrl+Tab` | Next tab |
-| `Ctrl+Shift+Tab` | Previous tab |
-| `Ctrl+E` | Toggle Edit / Read mode |
-| `Ctrl+S` | Save file (edit mode) |
-| `Ctrl+N` | New blank tab (edit mode) |
-| `Ctrl+P` | Print / Export PDF |
-| `Ctrl+Shift+S` | Full page screenshot |
-| `Ctrl++` / `Ctrl+-` | Zoom in / out |
-| `Ctrl+0` | Reset zoom to 100% |
-| `Ctrl+Home` | Open Welcome page |
-
----
-*READU.md v2.0.0*
-";
+        string md = GetWelcomeMarkdown();
         bool mermaid = _currentSettings?.Properties?.EnableMermaid?.Value ?? true;
         var toc = MarkdownParser.ExtractTableOfContents(md);
         var html = MarkdownParser.ParseMarkdownBody(md, "Welcome", mermaid);
-        return (html, toc);
+        return (md, html, toc);
     }
 
     #endregion
@@ -498,7 +697,50 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
                 RenderTabContent(_activeTab);
                 RestoreTabUI(_activeTab);
             }
+
+            UpdateAiFeatureStateCore();
         });
+    }
+
+    private async Task ShowAiSettingsDialogAsync()
+    {
+        if (_settingsWatcher is null || _currentSettings is null || this.Content?.XamlRoot is null)
+            return;
+
+        var dialog = new AiSettingsDialog(
+            AiConfig.FromSettings(_currentSettings),
+            AiConnectionService.TestConnectionAsync)
+        {
+            XamlRoot = this.Content.XamlRoot
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary)
+            return;
+
+        var updatedSettings = SettingsWatcher.CloneSettings(_currentSettings);
+        dialog.ResultConfig.ApplyTo(updatedSettings);
+
+        try
+        {
+            await _settingsWatcher.SaveSettingsAsync(updatedSettings);
+            _currentSettings = updatedSettings;
+            UpdateAiFeatureStateCore();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError("Failed to save AI settings", ex);
+            var uiText = AiUiTextService.Current;
+
+            var errorDialog = new ContentDialog
+            {
+                Title = uiText.SettingsSaveFailedTitle,
+                Content = AiUiTextService.FormatSettingsSaveError(ex.Message),
+                CloseButtonText = uiText.OkButtonText,
+                XamlRoot = this.Content.XamlRoot
+            };
+            await errorDialog.ShowAsync();
+        }
     }
 
     #endregion
@@ -665,6 +907,9 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
                     if (tab.FilePath is null || !File.Exists(tab.FilePath)) return;
                     if (tab.IsEditMode && tab.IsModified) return;
 
+                    if (_activeTab == tab)
+                        CloseSummaryPanel();
+
                     await LoadTabContentAsync(tab);
 
                     if (_activeTab == tab)
@@ -742,6 +987,8 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
     private void EditorTextBox_TextChanged(object sender, TextChangedEventArgs e)
     {
         if (_activeTab is null || !_activeTab.IsEditMode) return;
+
+        CloseSummaryPanel();
 
         _activeTab.Content = EditorTextBox.Text;
         _activeTab.IsModified = true;
@@ -1004,6 +1251,20 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
     private async void ZoomOutButton_Click(object sender, RoutedEventArgs e) => await ZoomOutAsync();
     private async void PrintButton_Click(object sender, RoutedEventArgs e) => await PrintAsync();
     private async void ScreenshotButton_Click(object sender, RoutedEventArgs e) => await CaptureFullPageScreenshotAsync();
+    private async void AiSettingsButton_Click(object sender, RoutedEventArgs e) => await ShowAiSettingsDialogAsync();
+    private async void SummarizeButton_Click(object sender, RoutedEventArgs e) => await SummarizeActiveTabAsync();
+    private void SummaryCopyButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (SummaryItems.Count == 0)
+            return;
+
+        var package = new DataPackage();
+        package.SetText(BuildSummaryClipboardText(SummaryItems));
+        Clipboard.SetContent(package);
+        SetSummaryStatus(AiUiTextService.Current.SummaryCopied);
+    }
+
+    private void SummaryCloseButton_Click(object sender, RoutedEventArgs e) => CloseSummaryPanel();
 
     #endregion
 

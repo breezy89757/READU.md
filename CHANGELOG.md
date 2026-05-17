@@ -1,5 +1,19 @@
 # READU.md - Changelog
 
+## [2.2.0] - 2026-05-17
+
+### Optional AI Summary
+- Added an optional AI Summary workflow with streaming inline output
+- Added AI settings for endpoint, API key, model, and summary response language
+- Added OpenAI-compatible endpoint normalization for Azure OpenAI and similar providers
+- Added copy-to-clipboard support for generated summaries
+- Added an AI Summary demo GIF and README notes for the validated AOAI + gpt-5.4-mini setup
+
+### UX and Safety
+- Kept AI UI English-first while allowing summary output language override in the prompt
+- Masked the API key field with peek-to-reveal behavior
+- Kept the AI summary entry point hidden until AI is configured and usable
+
 ## [2.0.0] - 2025-02-09
 
 ### Multi-Tab Architecture

@@ -1,0 +1,57 @@
+<ContentDialog
+    x:Class="ReadU.AiSettingsDialog"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    Title="AI Settings"
+    PrimaryButtonText="Save"
+    CloseButtonText="Cancel"
+    PrimaryButtonClick="AiSettingsDialog_PrimaryButtonClick"
+    DefaultButton="Primary"
+    mc:Ignorable="d">
+
+    <ScrollViewer MaxHeight="520" VerticalScrollBarVisibility="Auto">
+        <StackPanel Spacing="12">
+            <CheckBox x:Name="EnableAiCheckBox" Content="Enable AI summarization" />
+
+            <TextBlock x:Name="EndpointLabelTextBlock" Text="Endpoint" Style="{StaticResource BodyStrongTextBlockStyle}" />
+            <TextBox x:Name="EndpointTextBox"
+                     PlaceholderText="http://localhost:4000 or https://.../openai/v1/"
+                     TextWrapping="Wrap" />
+
+            <TextBlock x:Name="ApiKeyLabelTextBlock" Text="API Key" Style="{StaticResource BodyStrongTextBlockStyle}" />
+            <PasswordBox x:Name="ApiKeyPasswordBox"
+                         PasswordRevealMode="Peek"
+                         PlaceholderText="Enter API key" />
+
+            <TextBlock x:Name="ModelLabelTextBlock" Text="Model" Style="{StaticResource BodyStrongTextBlockStyle}" />
+            <TextBox x:Name="ModelTextBox" PlaceholderText="gpt-4o-mini" />
+
+            <TextBlock x:Name="SummaryLanguageLabelTextBlock" Text="Summary language" Style="{StaticResource BodyStrongTextBlockStyle}" />
+            <ComboBox x:Name="SummaryLanguageComboBox">
+                <ComboBoxItem x:Name="SummaryLanguageSystemComboBoxItem" Tag="system" Content="Use system language" />
+                <ComboBoxItem x:Name="SummaryLanguageEnglishComboBoxItem" Tag="en" Content="English" />
+                <ComboBoxItem x:Name="SummaryLanguageTraditionalChineseComboBoxItem" Tag="zh-Hant" Content="Traditional Chinese" />
+                <ComboBoxItem x:Name="SummaryLanguageSimplifiedChineseComboBoxItem" Tag="zh-Hans" Content="Simplified Chinese" />
+                <ComboBoxItem x:Name="SummaryLanguageJapaneseComboBoxItem" Tag="ja" Content="Japanese" />
+                <ComboBoxItem x:Name="SummaryLanguageKoreanComboBoxItem" Tag="ko" Content="Korean" />
+            </ComboBox>
+
+            <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                <Button x:Name="TestConnectionButton"
+                        Content="Test Connection"
+                        Click="TestConnectionButton_Click" />
+                <ProgressRing x:Name="TestProgressRing"
+                              Width="18"
+                              Height="18"
+                              Visibility="Collapsed"
+                              IsActive="False" />
+            </StackPanel>
+
+            <TextBlock x:Name="StatusTextBlock"
+                       Visibility="Collapsed"
+                       TextWrapping="WrapWholeWords" />
+        </StackPanel>
+    </ScrollViewer>
+</ContentDialog>

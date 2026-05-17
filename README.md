@@ -43,6 +43,17 @@ A fast, lightweight Markdown reader & editor for Windows, built with **Fluent De
 - **File Association** — double-click `.md` files to open in READU.md
 - **Lightweight** — minimal memory footprint, instant startup with pre-loaded CDN shell
 
+## Optional AI Summary
+
+AI Summary is optional and does not change the default READU.md experience for users who just want a Markdown reader/editor.
+
+<p align="center">
+  <img src="docs/AISummaryDemo.gif" alt="READU.md AI Summary Demo" width="800">
+</p>
+
+- Currently validated with Azure OpenAI-compatible endpoints and `gpt-5.4-mini`
+- If you run into issues with another AI provider, please open an issue with the details
+
 ## Keyboard Shortcuts
 
 | Shortcut | Action |

@@ -6,7 +6,7 @@
     <RootNamespace>ReadU</RootNamespace>
     <AssemblyName>READU.md</AssemblyName>
     <Product>READU.md</Product>
-    <Version>2.1.0</Version>
+    <Version>2.2.0</Version>
     <Authors>breezy89757</Authors>
     <Description>A fast, lightweight Markdown reader and editor for Windows, built with WinUI 3.</Description>
     <Copyright>Copyright (c) 2026 breezy89757</Copyright>
@@ -29,6 +29,9 @@
     <PackageReference Include="WinUIEx" Version="2.5.0" />
     <PackageReference Include="Markdig" Version="0.38.0" />
     <PackageReference Include="CommunityToolkit.Common" Version="8.2.2" />
+    <PackageReference Include="Microsoft.Extensions.AI" Version="10.6.0" />
+    <PackageReference Include="Microsoft.Extensions.AI.OpenAI" Version="10.6.0" />
+    <PackageReference Include="OpenAI" Version="2.10.0" />
     <Manifest Include="$(ApplicationManifest)" />
   </ItemGroup>
 
