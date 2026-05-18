@@ -114,7 +114,7 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
 | `Ctrl+Home` | Open Welcome page |
 
 ---
-*READU.md v2.2.0*
+*READU.md v2.2.1*
 ";
     }
 

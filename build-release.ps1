@@ -49,17 +49,15 @@ $stagingDir = Join-Path $PSScriptRoot "release\READU.md-v$version-$Platform"
 if (Test-Path $stagingDir) { Remove-Item $stagingDir -Recurse -Force }
 New-Item $stagingDir -ItemType Directory -Force | Out-Null
 
-# Copy app binaries (exclude PDB, locale folders, WebView2 fixed runtime)
+# Copy app binaries (exclude PDB only)
 Get-ChildItem $outputDir -File | Where-Object {
-    $_.Extension -ne ".pdb" -and
-    $_.Name -ne "WebView2Loader.dll"
+    $_.Extension -ne ".pdb"
 } | Copy-Item -Destination $stagingDir
 
-# Copy non-locale subdirectories if any (e.g. Images)
+# Copy subdirectories needed by Windows App SDK / WinUI / WebView2 resources.
+# Only skip reference assemblies, which are not needed at runtime.
 Get-ChildItem $outputDir -Directory | Where-Object {
-    $_.Name -notmatch "^[a-z]{2}(-[A-Z]{2})?$" -and  # Skip locale folders (en-US, zh-TW, etc.)
-    $_.Name -ne "ref" -and
-    $_.Name -ne "runtimes"
+    $_.Name -ne "ref"
 } | Copy-Item -Destination $stagingDir -Recurse
 
 # ── Bundle documentation ─────────────────────────────────────────────────────

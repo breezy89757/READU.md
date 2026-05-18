@@ -1,5 +1,12 @@
 # READU.md - Changelog
 
+## [2.2.1] - 2026-05-19
+
+### Packaging Fix
+- Fixed the GitHub release packaging script to preserve required `runtimes/` directories
+- Fixed the GitHub release packaging script to preserve WinUI language resource folders such as `en-us/` and `zh-TW/`
+- Fixed blank-window and startup failures in the packaged zip build caused by missing Windows App SDK / WebView2 runtime resources
+
 ## [2.2.0] - 2026-05-17
 
 ### Optional AI Summary
