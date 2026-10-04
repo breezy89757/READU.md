@@ -116,7 +116,7 @@
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
                     <TextBlock Grid.Row="0" Text="Table of Contents" Margin="16,12" FontWeight="SemiBold" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                    <ListView Grid.Row="1" x:Name="TocListView" ItemsSource="{x:Bind TocItems, Mode=OneWay}" SelectionMode="Single" SelectionChanged="TocListView_SelectionChanged">
+                    <ListView Grid.Row="1" x:Name="TocListView" ItemsSource="{x:Bind TocItems, Mode=OneWay}" SelectionMode="Single" SelectionChanged="TocListView_SelectionChanged" IsItemClickEnabled="True" ItemClick="TocListView_ItemClick">
                         <ListView.ItemTemplate>
                             <DataTemplate x:DataType="models:TocItem">
                                 <StackPanel Orientation="Horizontal" Margin="{x:Bind IndentMargin}">

@@ -395,6 +395,8 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
     {
         _ = wv.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(ZoomForwardingScript);
         _ = wv.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(LinkScript);
+        _ = wv.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(CopyCodeScript);
+        _ = wv.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(HeadingTrackerScript);
         wv.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
         wv.CoreWebView2.NavigationStarting += OnNavigationStarting;
         wv.CoreWebView2.NewWindowRequested += OnNewWindowRequested;
@@ -770,21 +772,33 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
 
     #region TOC
 
-    private async void TocListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private void TocListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        // The heading tracker selects as you read; that mustn't scroll the page back.
+        if (_syncingToc) return;
         if (TocListView.SelectedItem is TocItem selectedItem)
+            ScrollToHeading(selectedItem);
+    }
+
+    /// <summary>Clicking the heading that's already selected (by reading) still jumps back to it.</summary>
+    private void TocListView_ItemClick(object sender, ItemClickEventArgs e)
+    {
+        if (e.ClickedItem is TocItem item && ReferenceEquals(item, TocListView.SelectedItem))
+            ScrollToHeading(item);
+    }
+
+    private async void ScrollToHeading(TocItem selectedItem)
+    {
+        try
         {
-            try
+            var wv = _activeTab?.IsEditMode == true ? PreviewWebView : MarkdownWebView;
+            if (wv?.CoreWebView2 is not null)
             {
-                var wv = _activeTab?.IsEditMode == true ? PreviewWebView : MarkdownWebView;
-                if (wv?.CoreWebView2 is not null)
-                {
-                    await wv.CoreWebView2.ExecuteScriptAsync(
-                        $"document.getElementById('{selectedItem.Id}')?.scrollIntoView({{behavior:'smooth',block:'start'}});");
-                }
+                await wv.CoreWebView2.ExecuteScriptAsync(
+                    $"document.getElementById('{selectedItem.Id}')?.scrollIntoView({{behavior:'smooth',block:'start'}});");
             }
-            catch (Exception ex) { Logger.LogError("TOC scroll failed", ex); }
         }
+        catch (Exception ex) { Logger.LogError("TOC scroll failed", ex); }
     }
 
     #endregion
@@ -1349,6 +1363,15 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
                 case "link" when Text("url") is { } url:
                     await OpenLinkAsync(url);
                     break;
+                case "copy" when Text("text") is { } code:
+                    var package = new DataPackage();
+                    package.SetText(code);
+                    Clipboard.SetContent(package);
+                    break;
+                // Only the view on screen scrolls or gets new content, so this is the one being read.
+                case "heading":
+                    HighlightTocHeading(Text("id"));
+                    break;
             }
         }
         catch (System.Text.Json.JsonException) { }
@@ -1386,6 +1409,88 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
             document.addEventListener('auxclick', onLink, true);
         })();
         """;
+
+    /// <summary>
+    /// A Copy button on code blocks (shown on hover, never printed or in screenshots); the app writes the
+    /// clipboard, since this page has no secure origin for the browser's clipboard API.
+    /// </summary>
+    private const string CopyCodeScript = """
+        (() => {
+            const decorate = () => {
+                for (const pre of document.querySelectorAll('pre:not(.has-copy)')) {
+                    const code = pre.querySelector('code');
+                    if (!code || code.classList.contains('language-mermaid') || pre.classList.contains('mermaid')) continue;
+                    pre.classList.add('has-copy');
+                    const button = document.createElement('button');
+                    button.type = 'button';
+                    button.className = 'copy-code';
+                    button.textContent = 'Copy';
+                    button.setAttribute('aria-label', 'Copy code');
+                    button.addEventListener('click', e => {
+                        e.stopPropagation();
+                        chrome.webview.postMessage({ type: 'copy', text: code.innerText });
+                        button.textContent = 'Copied';
+                        setTimeout(() => { button.textContent = 'Copy'; }, 1500);
+                    });
+                    pre.appendChild(button);
+                }
+            };
+            let queued = false;
+            new MutationObserver(() => {
+                if (queued) return;
+                queued = true;
+                requestAnimationFrame(() => { queued = false; decorate(); });
+            }).observe(document, { childList: true, subtree: true });
+            document.addEventListener('DOMContentLoaded', () => {
+                const style = document.createElement('style');
+                style.textContent = `
+                    pre.has-copy { position: relative; }
+                    .copy-code { position: absolute; top: 6px; right: 6px; padding: 2px 10px; font: 12px 'Segoe UI', sans-serif;
+                                 color: var(--text-color); background: var(--bg-color); border: 1px solid var(--border-color);
+                                 border-radius: 6px; cursor: pointer; opacity: 0; transition: opacity .15s; }
+                    pre.has-copy:hover .copy-code, .copy-code:focus-visible { opacity: 1; }
+                    @media print { .copy-code { display: none; } }`;
+                document.head.appendChild(style);
+                decorate();
+            });
+        })();
+        """;
+
+    /// <summary>Reports the heading being read (the last one scrolled past) so the table of contents can follow.</summary>
+    private const string HeadingTrackerScript = """
+        (() => {
+            let current, queued = false;
+            const report = () => {
+                queued = false;
+                const headings = document.querySelectorAll('h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]');
+                if (headings.length === 0) return;
+                let id = headings[0].id;
+                const atBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2;
+                if (atBottom) id = headings[headings.length - 1].id;
+                else for (const h of headings) { if (h.getBoundingClientRect().top <= 10) id = h.id; else break; }
+                if (id !== current) { current = id; chrome.webview.postMessage({ type: 'heading', id }); }
+            };
+            const queue = () => { if (!queued) { queued = true; requestAnimationFrame(report); } };
+            window.addEventListener('scroll', queue, { passive: true });
+            new MutationObserver(() => { current = undefined; queue(); }).observe(document, { childList: true, subtree: true });
+        })();
+        """;
+
+    private bool _syncingToc;
+
+    /// <summary>Selects the heading being read in the table of contents, without scrolling the page back to it.</summary>
+    private void HighlightTocHeading(string id)
+    {
+        var item = TocItems.FirstOrDefault(t => t.Id == id);
+        if (item is null || ReferenceEquals(TocListView.SelectedItem, item)) return;
+        _syncingToc = true;
+        try
+        {
+            TocListView.SelectedItem = item;
+            TocListView.ScrollIntoView(item);
+        }
+        finally { _syncingToc = false; }
+    }
 
     private async Task OpenLinkAsync(string url)
     {
