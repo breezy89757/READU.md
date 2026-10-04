@@ -52,9 +52,9 @@ $stagingDir = Join-Path $PSScriptRoot "release\READU.md-v$version-$Platform"
 if (Test-Path $stagingDir) { Remove-Item $stagingDir -Recurse -Force }
 New-Item $stagingDir -ItemType Directory -Force | Out-Null
 
-# Copy app binaries (exclude PDB only)
+# Copy app binaries (not PDBs, nor the MSIX tooling's build recipe, which lists local paths)
 Get-ChildItem $outputDir -File | Where-Object {
-    $_.Extension -ne ".pdb"
+    $_.Extension -notin @(".pdb", ".appxrecipe")
 } | Copy-Item -Destination $stagingDir
 
 # Copy subdirectories needed by Windows App SDK / WinUI / WebView2 resources.

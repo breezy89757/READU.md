@@ -43,8 +43,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## Windows Community Toolkit
 
-Includes: CommunityToolkit.WinUI.UI.Controls.DataGrid, CommunityToolkit.WinUI.Controls.Sizers,
-CommunityToolkit.WinUI.Extensions, CommunityToolkit.Common
+Includes: CommunityToolkit.WinUI.Controls.Sizers
 
 - **License:** MIT
 - **Copyright:** © .NET Foundation and Contributors
@@ -105,6 +104,19 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+---
+
+## .NET libraries and the OpenAI .NET SDK
+
+Includes: Microsoft.Extensions.AI, Microsoft.Extensions.AI.OpenAI, System.Security.Cryptography.ProtectedData,
+OpenAI (OpenAI .NET SDK)
+
+- **License:** MIT
+- **Copyright:** © .NET Foundation and Contributors; © OpenAI
+- **Source:** https://github.com/dotnet/extensions, https://github.com/dotnet/runtime, https://github.com/openai/openai-dotnet
+
+Licensed under the MIT License (same text as above).
 
 ---
 
