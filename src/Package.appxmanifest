@@ -22,7 +22,11 @@
   </Dependencies>
 
   <Resources>
-    <Resource Language="x-generate" />
+    <!-- The languages READU.md has Store listings for. Not x-generate: the self-contained Windows App SDK
+         brings WinUI's strings in 86 languages into resources.pri, and Partner Center then asks for a
+         listing in every one of them. WinUI's own text (menus, tooltips) follows these languages. -->
+    <Resource Language="en-US" />
+    <Resource Language="zh-TW" />
   </Resources>
 
   <Applications>
