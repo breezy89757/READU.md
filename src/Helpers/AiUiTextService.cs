@@ -26,7 +26,7 @@ public sealed record AiUiText
     public string SummaryLanguageJapaneseOption { get; init; } = "Japanese";
     public string SummaryLanguageKoreanOption { get; init; } = "Korean";
     public string TestConnection { get; init; } = "Test Connection";
-    public string KeyStorageNote { get; init; } = "The API key is currently stored in the local settings.json file. Credential Locker can replace this in a later phase.";
+    public string KeyStorageNote { get; init; } = "Your API key is encrypted with Windows, so only your Windows account on this PC can read it. If it's missing (for example after moving to another PC), copy it again from your provider: Azure portal → your resource → Keys and Endpoint, or platform.openai.com/api-keys.";
     public string SaveButtonText { get; init; } = "Save";
     public string CancelButtonText { get; init; } = "Cancel";
     public string OkButtonText { get; init; } = "OK";

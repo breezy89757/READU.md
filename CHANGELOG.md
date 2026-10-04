@@ -1,5 +1,20 @@
 # READU.md - Changelog
 
+## [Unreleased]
+
+### Zoom
+- One zoom level for every tab, remembered across launches
+- `Ctrl` + `+` / `-` / `0` and `Ctrl` + mouse wheel now also work while the document has focus
+- The editor and the table of contents zoom with the page
+
+### Security
+- The AI API key is now encrypted with Windows (DPAPI) in `settings.json`. A key saved by an earlier
+  version is encrypted automatically on first launch; nothing to re-enter
+
+### Platform
+- Built on .NET 10 (LTS) with Windows App SDK 2.5; updated Markdig, WinUIEx and Microsoft.Extensions.AI
+- Privacy policy updated to describe AI Summary and the encrypted key
+
 ## [2.2.1] - 2026-05-19
 
 ### Packaging Fix

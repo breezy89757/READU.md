@@ -24,6 +24,10 @@
             <PasswordBox x:Name="ApiKeyPasswordBox"
                          PasswordRevealMode="Peek"
                          PlaceholderText="Enter API key" />
+            <TextBlock x:Name="KeyStorageNoteTextBlock"
+                       TextWrapping="Wrap"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       Style="{StaticResource CaptionTextBlockStyle}" />
 
             <TextBlock x:Name="ModelLabelTextBlock" Text="Model" Style="{StaticResource BodyStrongTextBlockStyle}" />
             <TextBox x:Name="ModelTextBox" PlaceholderText="gpt-4o-mini" />

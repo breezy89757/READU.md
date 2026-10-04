@@ -80,6 +80,7 @@ public sealed class SettingsWatcher : IDisposable
                 var json = await File.ReadAllTextAsync(_settingsFilePath).ConfigureAwait(false);
                 var settings = JsonSerializer.Deserialize<ReadUSettings>(json, s_jsonOptions);
                 var normalized = CloneSettings(settings);
+                await EncryptPlainTextKeyAsync(normalized).ConfigureAwait(false);
 
                 SettingsChanged?.Invoke(this, normalized);
                 return normalized;
@@ -98,6 +99,27 @@ public sealed class SettingsWatcher : IDisposable
 
         Logger.LogWarning("Could not read settings after retries, using defaults");
         return CloneSettings(s_defaults);
+    }
+
+    /// <summary>
+    /// A key saved before keys were encrypted is encrypted now and the file rewritten, so settings.json
+    /// never keeps it in plain text. If that fails, the key keeps working as before.
+    /// </summary>
+    private async Task EncryptPlainTextKeyAsync(ReadUSettings settings)
+    {
+        var key = settings.Properties.AiApiKey;
+        if (!SecretProtector.IsPlainText(key.Value))
+            return;
+        try
+        {
+            key.Value = SecretProtector.Protect(key.Value);
+            await SaveSettingsAsync(settings).ConfigureAwait(false);
+            Logger.LogInfo("Encrypted the saved API key");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError("Could not encrypt the saved API key", ex);
+        }
     }
 
     public async Task SaveSettingsAsync(ReadUSettings settings, CancellationToken cancellationToken = default)

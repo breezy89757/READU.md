@@ -54,6 +54,7 @@ AI Summary is optional and does not change the default READU.md experience for u
 
 - Currently validated with Azure OpenAI-compatible endpoints and `gpt-5.4-mini`
 - If you run into issues with another AI provider, please open an issue with the details
+- Your API key is encrypted with Windows (DPAPI), so only your Windows account on this PC can read it
 
 ## Keyboard Shortcuts
 

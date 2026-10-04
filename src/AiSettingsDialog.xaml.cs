@@ -159,6 +159,7 @@ public sealed partial class AiSettingsDialog : ContentDialog
         EndpointTextBox.PlaceholderText = _uiText.EndpointPlaceholder;
         ApiKeyLabelTextBlock.Text = _uiText.ApiKeyLabel;
         ApiKeyPasswordBox.PlaceholderText = _uiText.ApiKeyPlaceholder;
+        KeyStorageNoteTextBlock.Text = _uiText.KeyStorageNote;
         ModelLabelTextBlock.Text = _uiText.ModelLabel;
         ModelTextBox.PlaceholderText = _uiText.ModelPlaceholder;
         SummaryLanguageLabelTextBlock.Text = _uiText.SummaryLanguageLabel;

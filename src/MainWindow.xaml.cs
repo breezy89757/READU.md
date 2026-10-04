@@ -685,20 +685,19 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
     {
         DispatcherQueue.TryEnqueue(async () =>
         {
-            // Saving the zoom rewrites the file: when nothing else changed, don't re-render (and lose the scroll).
-            var newZoom = ClampZoom(newSettings?.Properties?.ZoomPercent?.Value ?? 100);
-            if (SameIgnoringZoom(_currentSettings, newSettings))
+            // Our own zoom save comes back as a reload: nothing else changed, so don't re-render (and lose the scroll).
+            if (_zoomSaveEcho && SameIgnoringZoom(_currentSettings, newSettings))
             {
+                _zoomSaveEcho = false;
                 _currentSettings = newSettings;
-                if (newZoom != _zoom)
-                {
-                    _zoom = newZoom;
-                    await ApplyZoomAsync();
-                }
                 return;
             }
-            _zoom = newZoom;
-            await ApplyZoomAsync();
+            var newZoom = ClampZoom(newSettings?.Properties?.ZoomPercent?.Value ?? 100);
+            if (newZoom != _zoom)
+            {
+                _zoom = newZoom;
+                await ApplyZoomAsync();
+            }
 
             var oldFontSize = _currentSettings?.Properties?.FontSize?.Value ?? 14;
             _currentSettings = newSettings;
@@ -1233,6 +1232,7 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
     private const double TocBaseFontSize = 14;
     private int _zoom = 100;
     private CancellationTokenSource _zoomSaveCts;
+    private bool _zoomSaveEcho;
 
     private Task ZoomInAsync() => StepZoomAsync(+1);
     private Task ZoomOutAsync() => StepZoomAsync(-1);
@@ -1280,6 +1280,7 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
 
         if (_settingsWatcher is null || _currentSettings?.Properties is null) return;
         _currentSettings.Properties.ZoomPercent = new IntProperty { Value = _zoom };
+        _zoomSaveEcho = true;
         try { await _settingsWatcher.SaveSettingsAsync(_currentSettings); }
         catch (Exception ex) { Logger.LogError("Failed to save zoom", ex); }
     }

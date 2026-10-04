@@ -1,6 +1,7 @@
 // READU.md — Licensed under the MIT License.
 
 using System;
+using ReadU.Helpers;
 
 namespace ReadU.Models;
 
@@ -65,7 +66,7 @@ public sealed record AiConfig
 
         settings.Properties.AiEnabled.Value = Enabled;
         settings.Properties.AiEndpoint.Value = NormalizeEndpoint(Endpoint);
-        settings.Properties.AiApiKey.Value = ApiKey;
+        settings.Properties.AiApiKey.Value = SecretProtector.Protect(ApiKey);
         settings.Properties.AiModel.Value = string.IsNullOrWhiteSpace(Model) ? DefaultModel : Model;
         settings.Properties.AiResponseLanguage.Value = string.IsNullOrWhiteSpace(SummaryLanguage)
             ? UseSystemLanguage
@@ -78,7 +79,7 @@ public sealed record AiConfig
         {
             Enabled = settings?.Properties?.AiEnabled?.Value ?? false,
             Endpoint = NormalizeEndpoint(settings?.Properties?.AiEndpoint?.Value ?? string.Empty),
-            ApiKey = settings?.Properties?.AiApiKey?.Value ?? string.Empty,
+            ApiKey = SecretProtector.Unprotect(settings?.Properties?.AiApiKey?.Value ?? string.Empty),
             Model = string.IsNullOrWhiteSpace(settings?.Properties?.AiModel?.Value)
                 ? DefaultModel
                 : settings.Properties.AiModel.Value,
