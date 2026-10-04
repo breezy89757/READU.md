@@ -29,6 +29,9 @@ $buildArgs = @(
     "build", $csproj,
     "-c", "Release",
     "-p:Platform=$Platform",
+    # Self-contained: ships the .NET runtime, so it runs without installing .NET.
+    "-p:RuntimeIdentifier=win-$($Platform.ToLower())",
+    "-p:SelfContained=true",
     # No PDBs, and no local source paths embedded in the binaries.
     "-p:DebugType=none",
     "-p:ContinuousIntegrationBuild=true",
