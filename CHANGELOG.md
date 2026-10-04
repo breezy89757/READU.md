@@ -1,6 +1,14 @@
 # READU.md - Changelog
 
-## [Unreleased]
+## [2.3.0] - 2026-10-04
+
+### Reading
+- Links no longer replace the document: web and mail links open in your browser or mail app, links to
+  other Markdown files open in a new tab, footnotes and `#anchors` jump within the page, and other local
+  files only open their folder
+- A Copy button on code blocks (on hover; not printed or in screenshots)
+- The table of contents highlights the section you're reading as you scroll
+- Started without a file, READU.md reopens the tabs from last time; the Welcome page lists recent files
 
 ### Zoom
 - One zoom level for every tab, remembered across launches

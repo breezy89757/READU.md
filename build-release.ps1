@@ -29,6 +29,9 @@ $buildArgs = @(
     "build", $csproj,
     "-c", "Release",
     "-p:Platform=$Platform",
+    # No PDBs, and no local source paths embedded in the binaries.
+    "-p:DebugType=none",
+    "-p:ContinuousIntegrationBuild=true",
     "--nologo"
 )
 & dotnet @buildArgs

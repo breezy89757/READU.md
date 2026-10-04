@@ -34,11 +34,14 @@ A fast, lightweight Markdown reader & editor for Windows, built with **Fluent De
 - **Mermaid.js** — flowcharts, sequence diagrams, Gantt charts, and more
 - **Smart Mermaid Caching** — SHA256-based incremental DOM updates preserve rendered diagrams
 - **Dark Mode** — automatically follows your Windows system theme
-- **Table of Contents** — auto-generated sidebar with smooth scroll navigation
+- **Table of Contents** — auto-generated sidebar with smooth scroll navigation; highlights the section you're reading
 - **Drag & Drop** — drop any `.md` file to open it instantly
 - **Hot Reload** — automatically refreshes when the file changes externally
 - **Zoom** — `Ctrl` + `+` / `-` or `Ctrl` + mouse wheel zooms the page, editor and table of contents together; the level is remembered
 - **Scroll Persistence** — per-tab scroll position preserved across tab switches
+- **Pick Up Where You Left Off** — reopens last session's tabs; recent files on the Welcome page
+- **Links** — web links open in your browser, links to other Markdown files open in a new tab, footnotes and `#anchors` jump within the page
+- **Copy Code** — a Copy button on every code block
 - **Print / PDF Export** — `Ctrl+P` to print or save as PDF
 - **Full Page Screenshot** — capture the entire rendered page as PNG (`Ctrl+Shift+S`)
 - **File Association** — double-click `.md` files to open in READU.md
@@ -131,10 +134,13 @@ Settings are stored at `%LOCALAPPDATA%\READU.md\settings.json`:
 {
   "properties": {
     "enable_mermaid": { "value": true },
-    "font_size": { "value": 14 }
+    "font_size": { "value": 14 },
+    "zoom_percent": { "value": 100 }
   }
 }
 ```
+
+The AI settings are kept there too, with the API key encrypted (`"dpapi:..."`). The tabs to reopen and the recent files list are kept separately in `session.json` in the same folder.
 
 ## Contributing
 

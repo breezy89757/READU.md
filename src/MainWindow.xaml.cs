@@ -84,7 +84,10 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
 ## Features
 * **Multi-Tab** — open multiple files simultaneously (like Notepad++)
 * **Edit Mode** — side-by-side Markdown editor + live preview (`Ctrl+E`)
-* **Table of Contents** — auto-generated sidebar navigation
+* **Table of Contents** — auto-generated sidebar navigation that follows your reading
+* **Links** — web links open in your browser, Markdown links in a new tab
+* **Copy Code** — hover a code block and press Copy
+* **Sessions** — your tabs reopen next time; recent files are listed here
 * **Syntax Highlighting** — powered by highlight.js
 * **Mermaid.js** — flowcharts, sequence diagrams, and more
 * **Dark Mode** — follows your system theme automatically
