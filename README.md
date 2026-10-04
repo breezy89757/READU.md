@@ -2,7 +2,7 @@
 
 A fast, lightweight Markdown reader & editor for Windows, built with **Fluent Design**.
 
-![.NET 9](https://img.shields.io/badge/.NET-9.0-purple)
+![.NET 10](https://img.shields.io/badge/.NET-10.0-purple)
 ![WinUI 3](https://img.shields.io/badge/WinUI-3-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 [![GitHub Release](https://img.shields.io/github/v/release/breezy89757/READU.md)](https://github.com/breezy89757/READU.md/releases/latest)
@@ -75,8 +75,8 @@ AI Summary is optional and does not change the default READU.md experience for u
 
 | Component | Technology |
 |---|---|
-| **Framework** | .NET 9 |
-| **UI** | WinUI 3 (Windows App SDK 1.6) |
+| **Framework** | .NET 10 (LTS) |
+| **UI** | WinUI 3 (Windows App SDK 2.5) |
 | **Markdown** | [Markdig](https://github.com/xoofx/markdig) |
 | **Rendering** | WebView2 (Chromium) |
 | **Syntax Highlighting** | highlight.js (CDN) |
@@ -105,7 +105,7 @@ READU.md is a **WinUI 3 desktop shell** that brings together several open-source
 ## Build
 
 ### Prerequisites
-- .NET 9 SDK
+- .NET 10 SDK
 - Visual Studio 2022 17.12+ with **Windows application development** workload
 - Windows 10 (1903+) or Windows 11
 
