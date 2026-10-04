@@ -6,6 +6,7 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using ReadU.Helpers;
@@ -114,7 +115,7 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
 | `Ctrl+Home` | Open Welcome page |
 
 ---
-*READU.md v2.2.1*
+*READU.md v{version}*
 ";
     }
 
@@ -315,6 +316,8 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)
     {
+        // Reopened next time READU.md starts without a file.
+        SessionStore.SaveOpenFiles(_tabs.Where(t => t.FilePath is not null).Select(t => t.FilePath), _activeTab?.FilePath);
         Dispose();
     }
 
@@ -355,7 +358,7 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
             {
                 await OpenFileInNewTabAsync(filePath);
             }
-            else
+            else if (!await RestoreSessionAsync())
             {
                 OpenWelcomeTab();
             }
@@ -430,7 +433,12 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
         var existing = _tabs.FirstOrDefault(t => t.IsWelcome);
         if (existing is not null)
         {
-            ActivateTab(existing);
+            // Bring the recent files up to date.
+            (existing.Content, existing.RenderedHtml, existing.Toc) = RenderWelcomePage();
+            if (existing == _activeTab)
+                RestoreTabUI(existing);
+            else
+                ActivateTab(existing);
             return;
         }
 
@@ -443,8 +451,12 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
         AddTabAndActivate(tab);
     }
 
-    private async Task OpenFileInNewTabAsync(string filePath)
+    /// <param name="remember">False while reopening the last session, so the recent list keeps its order.</param>
+    private async Task OpenFileInNewTabAsync(string filePath, bool remember = true)
     {
+        if (remember)
+            SessionStore.AddRecent(filePath);
+
         // Deduplicate: if already open, just switch to it
         var existing = _tabs.FirstOrDefault(t =>
             t.FilePath is not null && t.FilePath.Equals(filePath, StringComparison.OrdinalIgnoreCase));
@@ -458,6 +470,21 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
         await LoadTabContentAsync(tab);
         StartWatchingFile(tab);
         AddTabAndActivate(tab);
+    }
+
+    /// <summary>Reopens the files that were open when READU.md last closed; false when there are none.</summary>
+    private async Task<bool> RestoreSessionAsync()
+    {
+        var session = SessionStore.Load();
+        var files = session.OpenFiles.Where(File.Exists).ToList();
+        if (files.Count == 0) return false;
+
+        foreach (var file in files)
+            await OpenFileInNewTabAsync(file, remember: false);
+        var active = _tabs.FirstOrDefault(t => string.Equals(t.FilePath, session.ActiveFile, StringComparison.OrdinalIgnoreCase));
+        if (active is not null)
+            ActivateTab(active);
+        return true;
     }
 
     private void AddTabAndActivate(TabDocument tab)
@@ -673,9 +700,26 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
             tab.Content, tab.FilePath ?? "Welcome", mermaid);
     }
 
+    /// <summary>"## Recent Files" with links that open in a tab (see <see cref="OpenLinkAsync"/>); empty when there are none.</summary>
+    private static string RecentFilesMarkdown()
+    {
+        var recent = SessionStore.Load().RecentFiles.Where(File.Exists).ToList();
+        if (recent.Count == 0) return string.Empty;
+
+        // Markdown punctuation in names is escaped; <...> keeps spaces and parentheses in the link target.
+        static string Escape(string text) => Regex.Replace(text, @"([\\`*_\[\]<>#|])", @"\$1");
+        var sb = new StringBuilder("## Recent Files\n");
+        foreach (var file in recent)
+            sb.Append($"* [{Escape(Path.GetFileName(file))}](<{new Uri(file).AbsoluteUri}>) — {Escape(Path.GetDirectoryName(file) ?? string.Empty)}\n");
+        return sb.Append('\n').ToString();
+    }
+
     private (string Markdown, string Html, List<TocItem> Toc) RenderWelcomePage()
     {
-        string md = GetWelcomeMarkdown();
+        var version = typeof(App).Assembly.GetName().Version;
+        string md = GetWelcomeMarkdown()
+            .Replace("## Features", RecentFilesMarkdown() + "## Features")
+            .Replace("{version}", $"{version.Major}.{version.Minor}.{version.Build}");
         bool mermaid = _currentSettings?.Properties?.EnableMermaid?.Value ?? true;
         var toc = MarkdownParser.ExtractTableOfContents(md);
         var html = MarkdownParser.ParseMarkdownBody(md, "Welcome", mermaid);
@@ -1085,6 +1129,7 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
             if (file is null) return;
 
             _activeTab.FilePath = file.Path;
+            SessionStore.AddRecent(file.Path);
             StartWatchingFile(_activeTab);
         }
 
