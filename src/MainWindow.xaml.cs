@@ -394,7 +394,10 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
     private void ConfigureWebView(WebView2 wv)
     {
         _ = wv.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(ZoomForwardingScript);
+        _ = wv.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(LinkScript);
         wv.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
+        wv.CoreWebView2.NavigationStarting += OnNavigationStarting;
+        wv.CoreWebView2.NewWindowRequested += OnNewWindowRequested;
 
         var s = wv.CoreWebView2.Settings;
         s.IsStatusBarEnabled = false;
@@ -1328,17 +1331,101 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
         }, { passive: false });
         """;
 
+    /// <summary>Messages from the page: zoom keys, clicked links.</summary>
     private async void OnWebMessageReceived(CoreWebView2 sender, CoreWebView2WebMessageReceivedEventArgs args)
     {
         try
         {
             using var message = System.Text.Json.JsonDocument.Parse(args.WebMessageAsJson);
             var root = message.RootElement;
-            if (root.TryGetProperty("type", out var type) && type.GetString() == "zoom" &&
-                root.TryGetProperty("step", out var step) && step.TryGetInt32(out var value))
-                await StepZoomAsync(Math.Sign(value));
+            var type = root.TryGetProperty("type", out var t) ? t.GetString() : null;
+            string Text(string name) => root.TryGetProperty(name, out var p) && p.ValueKind == System.Text.Json.JsonValueKind.String ? p.GetString() : null;
+
+            switch (type)
+            {
+                case "zoom" when root.TryGetProperty("step", out var step) && step.TryGetInt32(out var value):
+                    await StepZoomAsync(Math.Sign(value));
+                    break;
+                case "link" when Text("url") is { } url:
+                    await OpenLinkAsync(url);
+                    break;
+            }
         }
         catch (System.Text.Json.JsonException) { }
+    }
+
+    #endregion
+
+    #region Links
+
+    private static readonly HashSet<string> s_markdownExtensions = new(StringComparer.OrdinalIgnoreCase)
+        { ".md", ".markdown", ".mdown", ".mkd", ".txt" };
+
+    /// <summary>
+    /// A clicked link never replaces the document: in-page anchors scroll the page (handled there),
+    /// web and mail links open in the default browser / mail app, Markdown files open in a tab, and
+    /// other local files only open their folder (a document can't make READU.md run anything).
+    /// </summary>
+    private const string LinkScript = """
+        (() => {
+            const onLink = e => {
+                if (e.type === 'auxclick' && e.button !== 1) return;
+                const a = e.target.closest && e.target.closest('a[href]');
+                if (!a) return;
+                e.preventDefault();
+                const raw = a.getAttribute('href') || '';
+                if (raw.startsWith('#')) {
+                    const target = document.getElementById(decodeURIComponent(raw.slice(1)));
+                    if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    return;
+                }
+                const url = typeof a.href === 'string' ? a.href : new URL(raw, document.baseURI).href;
+                chrome.webview.postMessage({ type: 'link', url });
+            };
+            document.addEventListener('click', onLink, true);
+            document.addEventListener('auxclick', onLink, true);
+        })();
+        """;
+
+    private async Task OpenLinkAsync(string url)
+    {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)) return;
+        try
+        {
+            switch (uri.Scheme)
+            {
+                case "http" or "https" or "mailto":
+                    await Launcher.LaunchUriAsync(uri);
+                    break;
+                case "file":
+                    var path = uri.LocalPath;
+                    if (File.Exists(path) && s_markdownExtensions.Contains(Path.GetExtension(path)))
+                        await OpenFileInNewTabAsync(path);
+                    else if (File.Exists(path))
+                        await Launcher.LaunchFolderPathAsync(Path.GetDirectoryName(path));
+                    else if (Directory.Exists(path))
+                        await Launcher.LaunchFolderPathAsync(path);
+                    break;
+            }
+        }
+        catch (Exception ex) { Logger.LogError($"Could not open link {uri.Scheme}:…", ex); }
+    }
+
+    /// <summary>Anything that would still navigate the view away from the document goes through <see cref="OpenLinkAsync"/>.</summary>
+    private void OnNavigationStarting(CoreWebView2 sender, CoreWebView2NavigationStartingEventArgs e)
+    {
+        if (e.Uri.StartsWith("data:", StringComparison.OrdinalIgnoreCase) || e.Uri.StartsWith("about:", StringComparison.OrdinalIgnoreCase))
+            return; // the shell (NavigateToString)
+        e.Cancel = true;
+        if (e.IsUserInitiated)
+            _ = OpenLinkAsync(e.Uri);
+    }
+
+    private void OnNewWindowRequested(CoreWebView2 sender, CoreWebView2NewWindowRequestedEventArgs e)
+    {
+        e.Handled = true;
+        if (e.IsUserInitiated)
+            _ = OpenLinkAsync(e.Uri);
     }
 
     #endregion
