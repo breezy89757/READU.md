@@ -21,7 +21,6 @@ public sealed class TabDocument : INotifyPropertyChanged, IDisposable
     private bool _isModified;
     private bool _isEditMode;
     private double _scrollPosition;
-    private int _zoomPercent = 100;
     private List<TocItem> _toc = [];
 
     /// <summary>Absolute file path. null for Welcome tab.</summary>
@@ -65,12 +64,6 @@ public sealed class TabDocument : INotifyPropertyChanged, IDisposable
     {
         get => _scrollPosition;
         set => SetField(ref _scrollPosition, value);
-    }
-
-    public int ZoomPercent
-    {
-        get => _zoomPercent;
-        set => SetField(ref _zoomPercent, value);
     }
 
     public List<TocItem> Toc

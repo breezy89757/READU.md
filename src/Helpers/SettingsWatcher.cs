@@ -25,6 +25,7 @@ public sealed class SettingsWatcher : IDisposable
         {
             EnableMermaid = new BoolProperty { Value = true },
             FontSize = new IntProperty { Value = 14 },
+            ZoomPercent = new IntProperty { Value = 100 },
             AiEnabled = new BoolProperty { Value = false },
             AiEndpoint = new StringProperty { Value = string.Empty },
             AiApiKey = new StringProperty { Value = string.Empty },
@@ -120,6 +121,7 @@ public sealed class SettingsWatcher : IDisposable
             {
                 EnableMermaid = new BoolProperty { Value = source?.EnableMermaid?.Value ?? defaults.EnableMermaid.Value },
                 FontSize = new IntProperty { Value = source?.FontSize?.Value ?? defaults.FontSize.Value },
+                ZoomPercent = new IntProperty { Value = source?.ZoomPercent?.Value ?? defaults.ZoomPercent.Value },
                 AiEnabled = new BoolProperty { Value = source?.AiEnabled?.Value ?? defaults.AiEnabled.Value },
                 AiEndpoint = new StringProperty { Value = source?.AiEndpoint?.Value ?? defaults.AiEndpoint.Value },
                 AiApiKey = new StringProperty { Value = source?.AiApiKey?.Value ?? defaults.AiApiKey.Value },

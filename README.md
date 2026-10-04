@@ -37,7 +37,8 @@ A fast, lightweight Markdown reader & editor for Windows, built with **Fluent De
 - **Table of Contents** — auto-generated sidebar with smooth scroll navigation
 - **Drag & Drop** — drop any `.md` file to open it instantly
 - **Hot Reload** — automatically refreshes when the file changes externally
-- **Scroll & Zoom Persistence** — per-tab scroll position and zoom level preserved across tab switches
+- **Zoom** — `Ctrl` + `+` / `-` or `Ctrl` + mouse wheel zooms the page, editor and table of contents together; the level is remembered
+- **Scroll Persistence** — per-tab scroll position preserved across tab switches
 - **Print / PDF Export** — `Ctrl+P` to print or save as PDF
 - **Full Page Screenshot** — capture the entire rendered page as PNG (`Ctrl+Shift+S`)
 - **File Association** — double-click `.md` files to open in READU.md
@@ -67,7 +68,7 @@ AI Summary is optional and does not change the default READU.md experience for u
 | `Ctrl+N` | New blank tab (edit mode) |
 | `Ctrl+P` | Print / Export PDF |
 | `Ctrl+Shift+S` | Full page screenshot |
-| `Ctrl+` `+` / `-` | Zoom in / out |
+| `Ctrl+` `+` / `-`, `Ctrl` + mouse wheel | Zoom in / out |
 | `Ctrl+0` | Reset zoom to 100% |
 | `Ctrl+Home` | Open Welcome page |
 
@@ -97,7 +98,7 @@ READU.md is a **WinUI 3 desktop shell** that brings together several open-source
 
 **What this project adds** on top of these libraries:
 - Native WinUI 3 app with system theme integration (Mica, dark/light mode)
-- Multi-tab document management with per-tab state (scroll, zoom, edit mode)
+- Multi-tab document management with per-tab state (scroll, edit mode)
 - File watching with debounced hot-reload
 - Full-page screenshot via CDP (`Page.captureScreenshot`)
 - File association and drag-and-drop integration

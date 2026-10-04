@@ -119,9 +119,10 @@
                     <ListView Grid.Row="1" x:Name="TocListView" ItemsSource="{x:Bind TocItems, Mode=OneWay}" SelectionMode="Single" SelectionChanged="TocListView_SelectionChanged">
                         <ListView.ItemTemplate>
                             <DataTemplate x:DataType="models:TocItem">
-                                <StackPanel Orientation="Horizontal" Margin="{x:Bind IndentMargin}">
+                                <!-- A Grid (not a horizontal StackPanel) gives the title a width to wrap at. -->
+                                <Grid Margin="{x:Bind IndentMargin}">
                                     <TextBlock Text="{x:Bind Title}" TextWrapping="Wrap" />
-                                </StackPanel>
+                                </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>
                     </ListView>

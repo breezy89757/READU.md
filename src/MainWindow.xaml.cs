@@ -109,7 +109,7 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
 | `Ctrl+N` | New blank tab (edit mode) |
 | `Ctrl+P` | Print / Export PDF |
 | `Ctrl+Shift+S` | Full page screenshot |
-| `Ctrl++` / `Ctrl+-` | Zoom in / out |
+| `Ctrl++` / `Ctrl+-`, `Ctrl` + wheel | Zoom in / out |
 | `Ctrl+0` | Reset zoom to 100% |
 | `Ctrl+Home` | Open Welcome page |
 
@@ -307,6 +307,8 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
 
         this.Closed += MainWindow_Closed;
         this.Content.KeyDown += OnKeyDown;
+        // The editor's scroller marks wheel events handled before they bubble here.
+        EditorTextBox.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler(EditorTextBox_PointerWheelChanged), handledEventsToo: true);
 
         InitializeAsync(filePath);
     }
@@ -338,6 +340,8 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
         _settingsWatcher = new SettingsWatcher();
         _settingsWatcher.SettingsChanged += OnSettingsChanged;
         _currentSettings = await _settingsWatcher.ReadSettingsAsync();
+        _zoom = ClampZoom(_currentSettings?.Properties?.ZoomPercent?.Value ?? 100);
+        await ApplyZoomAsync();
 
         try
         {
@@ -387,8 +391,11 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
             _shellLoaded = true;
     }
 
-    private static void ConfigureWebView(WebView2 wv)
+    private void ConfigureWebView(WebView2 wv)
     {
+        _ = wv.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(ZoomForwardingScript);
+        wv.CoreWebView2.WebMessageReceived += OnWebMessageReceived;
+
         var s = wv.CoreWebView2.Settings;
         s.IsStatusBarEnabled = false;
         s.AreDevToolsEnabled = false;
@@ -527,7 +534,7 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
                 TocItems.Add(item);
         }
 
-        ZoomLevelText.Text = $"{tab.ZoomPercent}%";
+        ZoomLevelText.Text = $"{_zoom}%";
         UpdateEditModeUI(tab.IsEditMode);
         UpdateAiFeatureStateCore();
 
@@ -539,11 +546,11 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
             EditorTextBox.Text = tab.Content ?? string.Empty;
             EditorTextBox.TextChanged += EditorTextBox_TextChanged;
 
-            NavigateWebView(PreviewWebView, tab.RenderedHtml, tab.ScrollPosition, tab.ZoomPercent);
+            NavigateWebView(PreviewWebView, tab.RenderedHtml, tab.ScrollPosition, _zoom);
         }
         else
         {
-            NavigateWebView(MarkdownWebView, tab.RenderedHtml, tab.ScrollPosition, tab.ZoomPercent);
+            NavigateWebView(MarkdownWebView, tab.RenderedHtml, tab.ScrollPosition, _zoom);
         }
     }
 
@@ -582,9 +589,8 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
         {
             await wv.CoreWebView2.ExecuteScriptAsync($"updateContent('{escaped}');");
 
-            // Apply zoom and scroll position
-            if (zoom != 100)
-                await wv.CoreWebView2.ExecuteScriptAsync($"document.body.style.zoom='{zoom}%';");
+            // Apply zoom (always: the view may still have another tab's) and scroll position
+            await wv.CoreWebView2.ExecuteScriptAsync($"document.body.style.zoom='{zoom}%';");
             if (scrollY > 0)
                 await wv.CoreWebView2.ExecuteScriptAsync($"window.scrollTo(0,{scrollY});");
         }
@@ -679,6 +685,21 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
     {
         DispatcherQueue.TryEnqueue(async () =>
         {
+            // Saving the zoom rewrites the file: when nothing else changed, don't re-render (and lose the scroll).
+            var newZoom = ClampZoom(newSettings?.Properties?.ZoomPercent?.Value ?? 100);
+            if (SameIgnoringZoom(_currentSettings, newSettings))
+            {
+                _currentSettings = newSettings;
+                if (newZoom != _zoom)
+                {
+                    _zoom = newZoom;
+                    await ApplyZoomAsync();
+                }
+                return;
+            }
+            _zoom = newZoom;
+            await ApplyZoomAsync();
+
             var oldFontSize = _currentSettings?.Properties?.FontSize?.Value ?? 14;
             _currentSettings = newSettings;
             var newFontSize = _currentSettings?.Properties?.FontSize?.Value ?? 14;
@@ -1096,6 +1117,9 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
 
         if (!isCtrl) return;
 
+        // In a WebView the page forwards the zoom keys itself (see ZoomForwardingScript); don't step twice.
+        var inWebView = FocusManager.GetFocusedElement(Content.XamlRoot) is WebView2;
+
         switch (e.Key)
         {
             case VirtualKey.O:
@@ -1149,20 +1173,20 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
                 }
                 break;
 
-            case (VirtualKey)187:
-            case VirtualKey.Add:
+            case (VirtualKey)187 when !inWebView:
+            case VirtualKey.Add when !inWebView:
                 e.Handled = true;
                 await ZoomInAsync();
                 break;
 
-            case (VirtualKey)189:
-            case VirtualKey.Subtract:
+            case (VirtualKey)189 when !inWebView:
+            case VirtualKey.Subtract when !inWebView:
                 e.Handled = true;
                 await ZoomOutAsync();
                 break;
 
-            case VirtualKey.Number0:
-            case VirtualKey.NumberPad0:
+            case VirtualKey.Number0 when !inWebView:
+            case VirtualKey.NumberPad0 when !inWebView:
                 e.Handled = true;
                 await ResetZoomAsync();
                 break;
@@ -1203,41 +1227,117 @@ A fast, lightweight Markdown reader & editor built with **Fluent Design**.
 
     #endregion
 
-    #region Zoom (CSS-level, per-tab)
+    #region Zoom (whole page, every tab, remembered)
 
-    private async Task ZoomInAsync()
+    private const double EditorBaseFontSize = 14;
+    private const double TocBaseFontSize = 14;
+    private int _zoom = 100;
+    private CancellationTokenSource _zoomSaveCts;
+
+    private Task ZoomInAsync() => StepZoomAsync(+1);
+    private Task ZoomOutAsync() => StepZoomAsync(-1);
+    private Task ResetZoomAsync() => StepZoomAsync(0);
+
+    /// <summary>+1 / -1 moves one step; 0 resets to 100%.</summary>
+    private async Task StepZoomAsync(int step)
     {
-        if (_activeTab is null || _activeTab.ZoomPercent >= ZoomMax) return;
-        _activeTab.ZoomPercent += ZoomStep;
+        var next = step == 0 ? 100 : Math.Clamp(_zoom + step * ZoomStep, ZoomMin, ZoomMax);
+        if (next == _zoom) return;
+        _zoom = next;
         await ApplyZoomAsync();
+        SaveZoomSoon();
     }
 
-    private async Task ZoomOutAsync()
-    {
-        if (_activeTab is null || _activeTab.ZoomPercent <= ZoomMin) return;
-        _activeTab.ZoomPercent -= ZoomStep;
-        await ApplyZoomAsync();
-    }
-
-    private async Task ResetZoomAsync()
-    {
-        if (_activeTab is null) return;
-        _activeTab.ZoomPercent = 100;
-        await ApplyZoomAsync();
-    }
-
+    /// <summary>The page (both views), the editor and the table of contents.</summary>
     private async Task ApplyZoomAsync()
     {
-        if (_activeTab is null) return;
-        ZoomLevelText.Text = $"{_activeTab.ZoomPercent}%";
+        ZoomLevelText.Text = $"{_zoom}%";
+        EditorTextBox.FontSize = EditorBaseFontSize * _zoom / 100;
+        // ListViewItem's default style sets its own font size, so it has to come through the container style.
+        TocListView.ItemContainerStyle = new Style(typeof(ListViewItem))
+        {
+            Setters = { new Setter(Control.FontSizeProperty, TocBaseFontSize * _zoom / 100) },
+        };
+
+        var js = $"document.body.style.zoom='{_zoom}%';";
         try
         {
-            var wv = _activeTab.IsEditMode ? PreviewWebView : MarkdownWebView;
-            if (wv?.CoreWebView2 is not null)
-                await wv.CoreWebView2.ExecuteScriptAsync(
-                    $"document.body.style.zoom='{_activeTab.ZoomPercent}%';");
+            if (_shellLoaded && MarkdownWebView?.CoreWebView2 is not null)
+                await MarkdownWebView.CoreWebView2.ExecuteScriptAsync(js);
+            if (_previewShellLoaded && PreviewWebView?.CoreWebView2 is not null)
+                await PreviewWebView.CoreWebView2.ExecuteScriptAsync(js);
         }
-        catch { }
+        catch (Exception ex) { Logger.LogError("Failed to apply zoom", ex); }
+    }
+
+    /// <summary>Remembers the zoom once it settles (Ctrl + wheel changes it many times a second).</summary>
+    private async void SaveZoomSoon()
+    {
+        _zoomSaveCts?.Cancel();
+        var cts = _zoomSaveCts = new CancellationTokenSource();
+        try { await Task.Delay(500, cts.Token); }
+        catch (OperationCanceledException) { return; }
+
+        if (_settingsWatcher is null || _currentSettings?.Properties is null) return;
+        _currentSettings.Properties.ZoomPercent = new IntProperty { Value = _zoom };
+        try { await _settingsWatcher.SaveSettingsAsync(_currentSettings); }
+        catch (Exception ex) { Logger.LogError("Failed to save zoom", ex); }
+    }
+
+    /// <summary>True when the two differ at most in their zoom.</summary>
+    private static bool SameIgnoringZoom(ReadUSettings a, ReadUSettings b)
+    {
+        if (a?.Properties is null || b?.Properties is null) return false;
+        static string Json(ReadUSettings settings)
+        {
+            var copy = SettingsWatcher.CloneSettings(settings);
+            copy.Properties.ZoomPercent = null;
+            return System.Text.Json.JsonSerializer.Serialize(copy);
+        }
+        return Json(a) == Json(b);
+    }
+
+    private static int ClampZoom(int percent) =>
+        Math.Clamp((int)Math.Round(percent / (double)ZoomStep) * ZoomStep, ZoomMin, ZoomMax);
+
+    /// <summary>Ctrl + wheel over the editor (the page forwards its own, see <see cref="ZoomForwardingScript"/>).</summary>
+    private async void EditorTextBox_PointerWheelChanged(object sender, PointerRoutedEventArgs e)
+    {
+        if (!e.KeyModifiers.HasFlag(VirtualKeyModifiers.Control)) return;
+        e.Handled = true;
+        await StepZoomAsync(e.GetCurrentPoint(EditorTextBox).Properties.MouseWheelDelta > 0 ? +1 : -1);
+    }
+
+    /// <summary>
+    /// Keys typed in a WebView don't reach the window's KeyDown, and its own zoom is off: the page
+    /// forwards Ctrl + / - / 0 and Ctrl + wheel as { type: 'zoom', step }.
+    /// </summary>
+    private const string ZoomForwardingScript = """
+        document.addEventListener('keydown', e => {
+            if (!e.ctrlKey || e.altKey || e.metaKey) return;
+            const step = (e.key === '+' || e.key === '=') ? 1 : e.key === '-' ? -1 : e.key === '0' ? 0 : null;
+            if (step === null) return;
+            e.preventDefault();
+            chrome.webview.postMessage({ type: 'zoom', step });
+        });
+        window.addEventListener('wheel', e => {
+            if (!e.ctrlKey) return;
+            e.preventDefault();
+            chrome.webview.postMessage({ type: 'zoom', step: e.deltaY < 0 ? 1 : -1 });
+        }, { passive: false });
+        """;
+
+    private async void OnWebMessageReceived(CoreWebView2 sender, CoreWebView2WebMessageReceivedEventArgs args)
+    {
+        try
+        {
+            using var message = System.Text.Json.JsonDocument.Parse(args.WebMessageAsJson);
+            var root = message.RootElement;
+            if (root.TryGetProperty("type", out var type) && type.GetString() == "zoom" &&
+                root.TryGetProperty("step", out var step) && step.TryGetInt32(out var value))
+                await StepZoomAsync(Math.Sign(value));
+        }
+        catch (System.Text.Json.JsonException) { }
     }
 
     #endregion
