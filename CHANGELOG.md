@@ -1,5 +1,13 @@
 # READU.md - Changelog
 
+## [2.3.1] - 2026-10-04
+
+### Microsoft Store
+- The Store package declares English and Traditional Chinese, the languages READU.md supports, instead of
+  every language the bundled WinUI components have text for (the Store page listed 86). WinUI's own text,
+  such as tab tooltips and context menus, is in Chinese on a Traditional Chinese system and in English
+  otherwise. The GitHub ZIP is unchanged apart from the version number
+
 ## [2.3.0] - 2026-10-04
 
 ### Reading
