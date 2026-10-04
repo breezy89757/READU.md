@@ -69,6 +69,14 @@ foreach ($platform in $Platforms) {
         Copy-Item -Destination $layout -Recurse
     Get-ChildItem $layout -Recurse -Filter *.pdb | Remove-Item -Force
 
+    # The tile, Store and file-type images are package content that the build doesn't copy to its output
+    # (Visual Studio adds them when it packages): bring them in, then check that every file the manifest
+    # names is really there, since Partner Center rejects a package that misses one.
+    Copy-Item (Join-Path $PSScriptRoot "src\Images") (Join-Path $layout "Images") -Recurse -Force
+    $referenced = [regex]::Matches($manifestText, '[\w\\]+\.png') | ForEach-Object { $_.Value } | Sort-Object -Unique
+    $missing = $referenced | Where-Object { -not (Test-Path (Join-Path $layout $_)) }
+    if ($missing) { throw "The $platform layout lacks files the manifest names: $($missing -join ', ')" }
+
     # The app's XAML (App.xbf, MainWindow.xbf, WinUI resources) is looked up in resources.pri. The build
     # already writes the full index under that name; winapp must not replace it with its own, which only
     # indexes the tile images (the app would then fail to start).
